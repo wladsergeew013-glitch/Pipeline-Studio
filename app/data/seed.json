@@ -1,0 +1,217 @@
+{
+  "format": "pipeline-studio",
+  "schemaVersion": 6,
+  "id": "studio-demo",
+  "title": "Первый процесс",
+  "revision": 0,
+  "materials": [],
+  "settings": {
+    "autoBus": true
+  },
+  "viewState": {
+    "compact": false,
+    "collapsed": {
+      "main": []
+    }
+  },
+  "pages": [
+    {
+      "id": "main",
+      "title": "Основной процесс",
+      "nodes": [
+        {
+          "id": "start",
+          "title": "Получить задачу",
+          "type": "block",
+          "x": 70,
+          "y": 190,
+          "w": 180,
+          "h": 90,
+          "fontSize": 16,
+          "materials": [],
+          "icons": [],
+          "fill": "#ffffff",
+          "stroke": "#98a8c0",
+          "relativeLock": true
+        },
+        {
+          "id": "steps",
+          "title": "План работы",
+          "type": "table",
+          "x": 330,
+          "y": 130,
+          "w": 320,
+          "h": 220,
+          "fontSize": 16,
+          "materials": [],
+          "icons": [],
+          "fill": "#ffffff",
+          "stroke": "#98a8c0",
+          "relativeLock": true,
+          "table": {
+            "autoSize": true,
+            "wordWrap": "words",
+            "widths": [
+              160,
+              160
+            ],
+            "heights": [
+              0,
+              0,
+              0
+            ],
+            "cells": [
+              [
+                {
+                  "text": "Этап",
+                  "bold": true,
+                  "fill": "#f1f0ff"
+                },
+                {
+                  "text": "Результат",
+                  "bold": true,
+                  "fill": "#f1f0ff"
+                }
+              ],
+              [
+                {
+                  "text": "Подготовка"
+                },
+                {
+                  "text": "Исходные данные"
+                }
+              ],
+              [
+                {
+                  "text": "Проверка"
+                },
+                {
+                  "text": "Согласованный план"
+                }
+              ]
+            ]
+          }
+        },
+        {
+          "id": "decision",
+          "title": "Всё готово?",
+          "type": "decision",
+          "x": 750,
+          "y": 165,
+          "w": 160,
+          "h": 140,
+          "fontSize": 16,
+          "materials": [],
+          "icons": [],
+          "fill": "#ffffff",
+          "stroke": "#98a8c0",
+          "relativeLock": true,
+          "autoSize": true
+        },
+        {
+          "id": "done",
+          "title": "Завершить",
+          "type": "block",
+          "x": 1020,
+          "y": 70,
+          "w": 180,
+          "h": 90,
+          "fontSize": 16,
+          "materials": [],
+          "icons": [],
+          "fill": "#e3f6e9",
+          "stroke": "#98a8c0",
+          "relativeLock": true
+        },
+        {
+          "id": "revise",
+          "title": "Уточнить детали",
+          "type": "block",
+          "x": 1020,
+          "y": 340,
+          "w": 180,
+          "h": 90,
+          "fontSize": 16,
+          "materials": [],
+          "icons": [],
+          "fill": "#fff1cd",
+          "stroke": "#98a8c0",
+          "relativeLock": true
+        },
+        {
+          "id": "note",
+          "title": "Дважды щёлкните ячейку, чтобы изменить текст",
+          "type": "note",
+          "x": 330,
+          "y": 470,
+          "w": 320,
+          "h": 85,
+          "fontSize": 16,
+          "materials": [],
+          "icons": [],
+          "fill": "#f2f0ff",
+          "stroke": "#98a8c0",
+          "relativeLock": true
+        }
+      ],
+      "edges": [
+        {
+          "id": "s-t",
+          "source": "start",
+          "target": "steps",
+          "sourcePort": "right",
+          "targetPort": "left",
+          "arrow": true,
+          "labelCentered": true
+        },
+        {
+          "id": "t-d",
+          "source": "steps",
+          "target": "decision",
+          "sourcePort": "right",
+          "targetPort": "left",
+          "arrow": true,
+          "labelCentered": true
+        },
+        {
+          "id": "yes",
+          "source": "decision",
+          "target": "done",
+          "sourcePort": "top",
+          "targetPort": "left",
+          "label": "Да",
+          "arrow": true,
+          "labelCentered": true
+        },
+        {
+          "id": "no",
+          "source": "decision",
+          "target": "revise",
+          "sourcePort": "bottom",
+          "targetPort": "left",
+          "label": "Нет",
+          "arrow": true,
+          "labelCentered": true
+        }
+      ],
+      "buses": [],
+      "drawings": [],
+      "groups": [
+        {
+          "id": "workflow",
+          "title": "Рабочий процесс",
+          "members": [
+            "start",
+            "steps",
+            "decision",
+            "done"
+          ]
+        }
+      ],
+      "layoutOptions": {
+        "autoSpace": false,
+        "busSymmetry": false
+      }
+    }
+  ]
+}

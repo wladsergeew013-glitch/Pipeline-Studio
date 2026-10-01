@@ -1,0 +1,14 @@
+**/__pycache__
+**/*.pyc
+app/data/project*.json
+app/data/materials.json
+app/data/assets
+app/data/publications
+qa
+.env
+
+.git
+originals
+documents
+releases
+node_modules

@@ -1,0 +1,13 @@
+* text=auto eol=lf
+*.js text eol=lf
+*.py text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.png binary
+*.pdf binary
+*.webm binary
+
+# Preserve vendored dictionaries and license texts verbatim.
+licenses/** -text -whitespace

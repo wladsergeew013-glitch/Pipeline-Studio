@@ -1,0 +1,46 @@
+# Local documents and runtime data
+/originals/
+/documents/User-*
+/documents/Drawing-*
+/app/data/*
+!/app/data/seed.json
+/qa/
+/releases/
+*.log
+*.tmp
+*.bak
+# Dependencies and generated caches
+node_modules/
+.dev-deps/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+test-results/
+playwright-report/
+# Local settings and credentials
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
+# Historical tests tied to private working documents; retained locally
+/tests/fixtures/
+/tests/test_core.js
+/tests/test_v03.js
+/tests/test_v04.js
+/tests/test_v06.js
+/tests/browser_v07.js
+/tests/browser_v071.js
+/tests/browser_*.py
+/tests/print_*.py
+/STATUS.md
+# One-off local migration helpers
+/upgrade_v*.py
+/editor_v*.py
+/quick_v*.py
+/prepare_public.py
+/*.inc

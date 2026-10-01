@@ -1,0 +1,293 @@
+{
+  "format": "pipeline-studio",
+  "schemaVersion": 6,
+  "id": "studio-demo",
+  "title": "Первый процесс",
+  "revision": 0,
+  "materials": [],
+  "settings": {
+    "autoSpace": true,
+    "autoBus": true
+  },
+  "viewState": {
+    "compact": false,
+    "collapsed": {
+      "main": []
+    }
+  },
+  "pages": [
+    {
+      "id": "main",
+      "title": "Основной процесс",
+      "nodes": [
+        {
+          "id": "start",
+          "title": "Получить задачу",
+          "type": "block",
+          "x": 70,
+          "y": 190,
+          "w": 180,
+          "h": 90,
+          "fontSize": 16,
+          "materials": [],
+          "icons": [],
+          "fill": "#ffffff",
+          "stroke": "#98a8c0",
+          "relativeLock": true,
+          "locked": false,
+          "collapsible": false
+        },
+        {
+          "id": "steps",
+          "title": "План работы",
+          "type": "table",
+          "x": 330,
+          "y": 130,
+          "w": 320,
+          "h": 183,
+          "fontSize": 16,
+          "materials": [],
+          "icons": [],
+          "fill": "#ffffff",
+          "stroke": "#98a8c0",
+          "relativeLock": true,
+          "table": {
+            "autoSize": true,
+            "wordWrap": "words",
+            "widths": [
+              160,
+              160
+            ],
+            "heights": [
+              0,
+              0,
+              0
+            ],
+            "cells": [
+              [
+                {
+                  "text": "Этап",
+                  "bold": true,
+                  "fill": "#f1f0ff"
+                },
+                {
+                  "text": "Результат",
+                  "bold": true,
+                  "fill": "#f1f0ff"
+                }
+              ],
+              [
+                {
+                  "text": "Подготовка"
+                },
+                {
+                  "text": "Исходные данные"
+                }
+              ],
+              [
+                {
+                  "text": "Проверка"
+                },
+                {
+                  "text": "Согласованный план"
+                }
+              ]
+            ],
+            "rowIds": [
+              "row-cef97f17-edbc-4924-a066-707b535a136f",
+              "row-3075aca4-9dd0-4703-aed8-85a98ae72757",
+              "row-8bf1ffbc-a28f-4699-a4d8-35eac01da863"
+            ],
+            "colIds": [
+              "col-86a2ed4c-3e31-4904-8cde-786478839cc5",
+              "col-76bfef64-d93b-4071-8e84-e5b63ed5cd1a"
+            ]
+          },
+          "portConfig": {
+            "body": [
+              "left"
+            ],
+            "rows": [
+              "right"
+            ]
+          },
+          "ports": [
+            {
+              "id": "row:row-cef97f17-edbc-4924-a066-707b535a136f:left",
+              "rowId": "row-cef97f17-edbc-4924-a066-707b535a136f",
+              "side": "left",
+              "x": 0,
+              "y": 0.5
+            },
+            {
+              "id": "row:row-3075aca4-9dd0-4703-aed8-85a98ae72757:left",
+              "rowId": "row-3075aca4-9dd0-4703-aed8-85a98ae72757",
+              "side": "left",
+              "x": 0,
+              "y": 0.5
+            },
+            {
+              "id": "row:row-8bf1ffbc-a28f-4699-a4d8-35eac01da863:left",
+              "rowId": "row-8bf1ffbc-a28f-4699-a4d8-35eac01da863",
+              "side": "left",
+              "x": 0,
+              "y": 0.5
+            },
+            {
+              "id": "row:row-cef97f17-edbc-4924-a066-707b535a136f:right",
+              "rowId": "row-cef97f17-edbc-4924-a066-707b535a136f",
+              "side": "right",
+              "x": 1,
+              "y": 0.5
+            },
+            {
+              "id": "row:row-3075aca4-9dd0-4703-aed8-85a98ae72757:right",
+              "rowId": "row-3075aca4-9dd0-4703-aed8-85a98ae72757",
+              "side": "right",
+              "x": 1,
+              "y": 0.5
+            },
+            {
+              "id": "row:row-8bf1ffbc-a28f-4699-a4d8-35eac01da863:right",
+              "rowId": "row-8bf1ffbc-a28f-4699-a4d8-35eac01da863",
+              "side": "right",
+              "x": 1,
+              "y": 0.5
+            }
+          ],
+          "locked": false,
+          "collapsible": false
+        },
+        {
+          "id": "decision",
+          "title": "Всё готово?",
+          "type": "decision",
+          "x": 750,
+          "y": 165,
+          "w": 160,
+          "h": 140,
+          "fontSize": 16,
+          "materials": [],
+          "icons": [],
+          "fill": "#ffffff",
+          "stroke": "#98a8c0",
+          "relativeLock": true,
+          "autoSize": true,
+          "locked": false,
+          "collapsible": false
+        },
+        {
+          "id": "done",
+          "title": "Завершить",
+          "type": "block",
+          "x": 1020,
+          "y": 70,
+          "w": 180,
+          "h": 90,
+          "fontSize": 16,
+          "materials": [],
+          "icons": [],
+          "fill": "#e3f6e9",
+          "stroke": "#98a8c0",
+          "relativeLock": true,
+          "locked": false,
+          "collapsible": false
+        },
+        {
+          "id": "revise",
+          "title": "Уточнить детали",
+          "type": "block",
+          "x": 1020,
+          "y": 340,
+          "w": 180,
+          "h": 90,
+          "fontSize": 16,
+          "materials": [],
+          "icons": [],
+          "fill": "#fff1cd",
+          "stroke": "#98a8c0",
+          "relativeLock": true,
+          "locked": false,
+          "collapsible": false
+        },
+        {
+          "id": "note",
+          "title": "Дважды щёлкните ячейку, чтобы изменить текст",
+          "type": "note",
+          "x": 330,
+          "y": 470,
+          "w": 320,
+          "h": 85,
+          "fontSize": 16,
+          "materials": [],
+          "icons": [],
+          "fill": "#f2f0ff",
+          "stroke": "#98a8c0",
+          "relativeLock": true,
+          "locked": false,
+          "collapsible": false
+        }
+      ],
+      "edges": [
+        {
+          "id": "s-t",
+          "source": "start",
+          "target": "steps",
+          "sourcePort": "right",
+          "targetPort": "left",
+          "arrow": true,
+          "labelCentered": true
+        },
+        {
+          "id": "t-d",
+          "source": "steps",
+          "target": "decision",
+          "sourcePort": "right",
+          "targetPort": "left",
+          "arrow": true,
+          "labelCentered": true
+        },
+        {
+          "id": "yes",
+          "source": "decision",
+          "target": "done",
+          "sourcePort": "top",
+          "targetPort": "left",
+          "label": "Да",
+          "arrow": true,
+          "labelCentered": true
+        },
+        {
+          "id": "no",
+          "source": "decision",
+          "target": "revise",
+          "sourcePort": "bottom",
+          "targetPort": "left",
+          "label": "Нет",
+          "arrow": true,
+          "labelCentered": true
+        }
+      ],
+      "buses": [],
+      "drawings": [],
+      "groups": [
+        {
+          "id": "workflow",
+          "title": "Рабочий процесс",
+          "members": [
+            "start",
+            "steps",
+            "decision",
+            "done"
+          ]
+        }
+      ],
+      "layoutOptions": {
+        "busSymmetry": false,
+        "symmetryGap": 64,
+        "autoSpace": false
+      },
+      "collapseMode": "nodes"
+    }
+  ]
+}

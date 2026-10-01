@@ -1,0 +1,15 @@
+services:
+  studio:
+    build: .
+    # For LAN deployment change bind only with IT approval and HTTPS protection.
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      STUDIO_PASSWORD: ${STUDIO_PASSWORD:?Set an editor password in .env}
+      STUDIO_READER_PASSWORD: ${STUDIO_READER_PASSWORD:-}
+      STUDIO_DATA: /data
+    volumes:
+      - studio-data:/data
+    restart: unless-stopped
+volumes:
+  studio-data:
