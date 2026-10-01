@@ -1,14 +1,15 @@
 {
   "version": "0.7.2",
   "schemaVersion": 6,
-  "publicRelease": true,
-  "publicChecks": {
+  "publicRelease": false,
+  "fullLocalChecksPassed": 281,
+  "fullLocalChecksSkipped": 1,
+  "report": "docs/VALIDATION.md",
+  "status": "local-tested-release",
+  "sourceChecks": {
     "model": 65,
     "browser": 32,
     "http": 18,
     "optionalSkipped": 1
-  },
-  "fullLocalChecksPassed": 281,
-  "fullLocalChecksSkipped": 1,
-  "report": "docs/VALIDATION.md"
+  }
 }
