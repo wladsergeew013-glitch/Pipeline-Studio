@@ -886,7 +886,7 @@ Object.assign(C,{cellMaterialIds,initTable,tableAxis,mergeTable,splitTable,table
  function descendants(pg,id){const seen=new Set([id]),queue=[id];for(let i=0;i<queue.length;i++)for(const e of pg.edges)if(e.flow!==false&&e.source===queue[i]&&!seen.has(e.target)){seen.add(e.target);queue.push(e.target);}seen.delete(id);return seen;}
  function dragPlan(pg,selection,folds,mode){const plan=prev.dragPlan(pg,selection,folds,mode);for(const id of [...plan.ids])if(pg.nodes.find(n=>n.id===id)?.relativeLock)for(const next of descendants(pg,id))plan.ids.add(next);for(let i=0;i<pg.nodes.length;i++){let changed=false;for(const n of pg.nodes)if(n.anchorId&&plan.ids.has(n.anchorId)&&!plan.ids.has(n.id)){plan.ids.add(n.id);changed=true;}if(!changed)break;}plan.locked=[...plan.ids].filter(id=>pg.nodes.find(n=>n.id===id)?.locked);return plan;}
  function display(pg,folds=new Set(),compact=true,folded=new Set(),options={}){
-  const sized={...pg,nodes:pg.nodes.map(n=>n.table&&C.fitTableWords?C.fitTableWords(n):n.autoSize&&!n.locked&&C.measureNode?{...n,...C.measureNode(n)}:n),buses:(pg.buses||[]).map(b=>b.autoAlign!==undefined?{...b,symmetry:false}:b)};
+  const sized={...pg,nodes:pg.nodes.map(n=>n.table&&C.fitTableWords?C.fitTableWords(n):n.autoSize&&C.measureNode?{...n,...C.measureNode(n)}:n),buses:(pg.buses||[]).map(b=>b.autoAlign!==undefined?{...b,symmetry:false}:b)};
   const d=prev.display(sized,folds,compact,folded,options),shown=new Map(d.nodes.map(n=>[n.id,n])),offsets=d.layoutOffsets||new Map();
   const shift=(ids,key,delta)=>{d.layoutOffsets=offsets;for(const id of ids){const n=shown.get(id);if(!n||n.anchorId)continue;n[key]+=delta;const o=offsets.get(id)||{x:0,y:0};offsets.set(id,{...o,[key]:o[key]+delta});}};
   for(const bus of pg.buses||[]){if(!bus.autoAlign||!['in','out'].includes(bus.mode))continue;const hub=shown.get(bus.hub);if(!hub)continue;const es=d.edges.filter(e=>e.bus===bus.id&&!e.proxy),ids=[...new Set(es.map(e=>bus.mode==='out'?e.target:e.source))],heads=ids.map(id=>shown.get(id));if(heads.length<2||heads.some(n=>!n||n.locked))continue;
@@ -1045,4 +1045,18 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
    for(const segment of b.segments||[]){const terminal=b.terminals.find(t=>t.node===segment.node&&Math.abs(t.tip.x-(segment.points[0]?.x||0))+Math.abs(t.tip.y-(segment.points[0]?.y||0))<.01);segment.arrowStart=!!terminal&&edges.some(e=>e.source===terminal.node&&e.arrowStart&&C.samePort(d.nodes.find(n=>n.id===terminal.node),e.sourcePort,terminal.port,'right'));}
   }return out;}
  Object.assign(C,{rowKey,rowContinuations,rowCollapseState,display,tableAxis,dragPlan,normalizeV6,bundleRoutes,internalTarget});
+})(globalThis.Core);
+
+/* Source removal is a single undoable document operation. File contents stay intact. */
+(function(C){
+ function unlinkHTML(html,id){return typeof html==='string'?html.replace(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi,(whole,attrs,text)=>{const m=attrs.match(/\bdata-open-material\s*=\s*(["'])(.*?)\1/i);return m&&m[2]===id?text:whole;}):html;}
+ function removeMaterial(project,id){
+  const material=(project.materials||[]).find(m=>m.id===id);if(!material)return C.clone(project);
+  if(project.pages.some(p=>p.nodes.some(n=>n.imageMaterial===id||n.icons?.some(ic=>ic.material===id))))throw new Error('Источник используется как изображение блока. Сначала замените изображение.');
+  const out=C.clone(project);out.materials=out.materials.filter(m=>m.id!==id);
+  for(const m of out.materials)if(m.previewMaterial===id)delete m.previewMaterial;
+  for(const pg of out.pages)for(const n of pg.nodes){n.materials=(n.materials||[]).filter(x=>x!==id);if(n.html)n.html=unlinkHTML(n.html,id);for(const row of n.table?.cells||[])for(const cell of row){if(!cell)continue;if(cell.material===id)delete cell.material;if(cell.materials)cell.materials=cell.materials.filter(x=>x!==id);if(cell.sourceOptions)delete cell.sourceOptions[id];if(cell.html)cell.html=unlinkHTML(cell.html,id);}}
+  out.deletedMaterials=[...(out.deletedMaterials||[]).filter(x=>x.id!==id),{id,version:material.version||1}];return out;
+ }
+ Object.assign(C,{removeMaterial});
 })(globalThis.Core);

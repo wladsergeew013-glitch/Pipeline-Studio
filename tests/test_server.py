@@ -145,4 +145,34 @@ class ServerTests(unittest.TestCase):
         status,published,_=self.reader.call('/api/published/'+pub['id']);self.assertEqual(status,200)
         self.assertEqual(next(m for m in published['materials'] if m['id']=='qa-internal')['target'],target)
 
+    def test_19_source_deletion_persists_and_restore_is_possible(self):
+        m=self.upload('deletion.txt',b'SOURCE-KEPT');p=self.project()
+        p['materials']=[x for x in p['materials'] if x['id']!=m['id']]
+        p['deletedMaterials']=[{'id':m['id'],'version':m['version']}]
+        status,res,_=self.editor.call('/api/project','PUT',p);self.assertEqual(status,200,res)
+        out=self.project();self.assertNotIn(m['id'],{x['id'] for x in out['materials']});self.assertNotIn('deletedMaterials',out)
+        self.assertTrue((Path(self.tmp.name)/'assets'/m['asset']).exists())
+        # Undo restores the same ID and retained bytes.
+        out['materials'].append(m);self.assertEqual(self.editor.call('/api/project','PUT',out)[0],200)
+        self.assertIn(m['id'],{x['id'] for x in self.project()['materials']})
+        self.assertEqual(self.editor.call('/media/'+m['asset'])[1],b'SOURCE-KEPT')
+    def test_20_stale_deletion_is_atomic_and_preserves_concurrent_replacement(self):
+        m=self.upload('old-source.txt',b'OLD');p=self.project();revision=p['revision']
+        p['materials']=[x for x in p['materials'] if x['id']!=m['id']]
+        p['deletedMaterials']=[{'id':m['id'],'version':m['version']}]
+        replacement=self.upload('new-source.txt',b'NEW',m['id'])
+        self.assertEqual(self.editor.call('/api/project','PUT',p)[0],409)
+        out=self.project();self.assertEqual(out['revision'],revision)
+        self.assertEqual(next(x for x in out['materials'] if x['id']==m['id'])['asset'],replacement['asset'])
+    def test_21_reader_cannot_delete_sources(self):
+        p=self.project();m=p['materials'][0];p['materials']=p['materials'][1:]
+        p['deletedMaterials']=[{'id':m['id'],'version':m.get('version',1)}]
+        self.assertEqual(self.reader.call('/api/project','PUT',p)[0],403)
+        self.assertIn(m['id'],{x['id'] for x in self.project()['materials']})
+    def test_22_invalid_deletion_cannot_change_the_registry(self):
+        p=self.project();revision=p['revision'];p['deletedMaterials']=[{'id':p['materials'][0]['id'],'version':0}]
+        self.assertEqual(self.editor.call('/api/project','PUT',p)[0],400);self.assertEqual(self.project()['revision'],revision)
+        p['deletedMaterials']=[{'id':p['materials'][0]['id'],'version':p['materials'][0].get('version',1)}]
+        self.assertEqual(self.editor.call('/api/project','PUT',p)[0],400);self.assertEqual(self.project()['revision'],revision)
+
 if __name__=='__main__':unittest.main(verbosity=2)

@@ -235,13 +235,20 @@ class Handler(BaseHTTPRequestHandler):
                     if p.get('revision')!=old.get('revision'):return self.json({'error':'Проект изменён в другом окне. Сохраните копию JSON и перезагрузите страницу.'},409)
                     p['revision']=old.get('revision',0)+1
                     incoming=p.pop('materials',None)
-                    if incoming is not None:
-                        current={m['id']:m for m in load(DATA/'materials.json',[])}
-                        for m in incoming:
-                            prev=current.get(m['id'])
-                            if prev and m.get('version',1)<prev.get('version',1):return self.json({'error':'Материал обновлен в другом окне. Перезагрузите проект.'},409)
-                            current[m['id']]=m
-                        write(DATA/'materials.json',list(current.values()))
+                    deleted=p.pop('deletedMaterials',[])
+                    if not isinstance(deleted,list) or any(not isinstance(m,dict) or not isinstance(m.get('id'),str) or not isinstance(m.get('version'),int) or m['version']<1 for m in deleted):raise ValueError('Некорректный список удалённых источников')
+                    current={m['id']:m for m in load(DATA/'materials.json',[])}
+                    removed={m['id'] for m in deleted}
+                    if removed.intersection(m['id'] for m in incoming or []):raise ValueError('Источник одновременно сохранён и удалён')
+                    for m in deleted:
+                        prev=current.get(m['id'])
+                        if prev and m['version']<prev.get('version',1):return self.json({'error':'Источник обновлён в другом окне. Перезагрузите проект перед удалением.'},409)
+                    for m in incoming or []:
+                        prev=current.get(m['id'])
+                        if prev and m.get('version',1)<prev.get('version',1):return self.json({'error':'Материал обновлен в другом окне. Перезагрузите проект.'},409)
+                    for mid in removed:current.pop(mid,None)
+                    for m in incoming or []:current[m['id']]=m
+                    if incoming is not None or deleted:write(DATA/'materials.json',list(current.values()))
                     write(DATA/'project.previous.json',old);write(DATA/'project.json',p)
                 return self.json({'revision':p['revision']})
             if path=='/api/import':
