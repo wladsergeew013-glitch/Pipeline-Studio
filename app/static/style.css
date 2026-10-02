@@ -250,3 +250,8 @@
 .document-command{display:flex;align-items:center;justify-content:flex-start;gap:10px;padding:7px 9px;min-height:40px;text-align:left;border:1px solid transparent;background:#f7f9fd}.document-command:hover{background:#eef2ff;border-color:#d9dff6}.document-command strong{font-size:12px;line-height:1.4;font-weight:500}.document-command-icon{display:flex;align-items:center;justify-content:center;flex:none;width:25px;height:25px;color:#63729b}.document-command-icon .ui-icon{width:19px;height:19px}.document-command[data-action=close-project]{color:#a74e52}
 @media(max-width:520px){.document-command-grid{grid-template-columns:1fr}.sources-dialog .modal-content{padding:14px}.sources-list .file-chip{padding:6px;gap:5px}}
 @media print{.node-state-icons{display:none!important}}
+
+/* 0.7.5 selection and comments */
+.node.comment{border-style:dashed;border-radius:8px}.node.comment .node-body{overflow:hidden}.selection-box.intersecting{background:#16a08512;border-color:#16a085;border-style:dashed}.bulk-field{margin-bottom:12px}.protection-badge{display:inline-flex;color:#6d7995}.protection-badge svg{width:16px;height:16px}
+
+.node.comment .node-label{overflow-wrap:normal;word-break:normal}

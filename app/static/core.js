@@ -376,9 +376,9 @@ const effective=n=>({...n,x:n.x+(n.offsetX||0),y:n.y+(n.offsetY||0)});
 function graph(pg){
  const byId=new Map(pg.nodes.map(n=>[n.id,n])),adj=new Map(pg.nodes.map(n=>[n.id,[]])),incoming=new Map(pg.nodes.map(n=>[n.id,[]]));
  const add=(a,b)=>{if(a!==b&&!adj.get(a).includes(b)){adj.get(a).push(b);incoming.get(b).push(a);}};
- for(const e of pg.edges){const s=byId.get(e.source),t=byId.get(e.target);if(!s||!t||e.flow===false)continue;
-  const sn=s.type==='note'&&!s.flowNode,tn=t.type==='note'&&!t.flowNode;
-  if(e.role!=='flow'&&sn!==tn){add(sn?t.id:s.id,sn?s.id:t.id);}else add(s.id,t.id);
+ for(const e of pg.edges){const source=byId.get(e.source),target=byId.get(e.target);if(!source||!target)continue;
+  if(C.edgeRelationship){const r=C.edgeRelationship(pg,e);if(r)add(r.parent,r.child);}
+  else if(e.flow!==false){const sn=source.type==='note'&&!source.flowNode,tn=target.type==='note'&&!target.flowNode;if(e.role!=='flow'&&sn!==tn)add(sn?target.id:source.id,sn?source.id:target.id);else add(source.id,target.id);}
  }
  for(const n of pg.nodes)if(n.anchorId&&byId.has(n.anchorId))add(n.anchorId,n.id);
  return {byId,adj,incoming};
@@ -414,7 +414,7 @@ function layoutUnits(pg){
  const membership=new Map();
  for(const n of top)for(const id of [n.id,...sets.get(n.id)]){
   // Shared annotations must not fuse otherwise independent branch envelopes.
-  if(g.byId.get(id)?.type==='note')continue;
+  if(['note','comment'].includes(g.byId.get(id)?.type))continue;
   if(membership.has(id)){const a=find(n.id),b=find(membership.get(id));if(a!==b)parent.set(b,a);}else membership.set(id,n.id);
  }
  const units=new Map();for(const n of top){const id=find(n.id);if(!units.has(id))units.set(id,{id,heads:[],members:new Set(),rank:Infinity});const u=units.get(id);u.heads.push(n.id);u.rank=Math.min(u.rank,n.y+(n.offsetY||0));for(const x of [n.id,...sets.get(n.id)])u.members.add(x);}
@@ -438,31 +438,51 @@ function spaceBranches(pg,nodes,compact,options={}){
  const raw=new Map(pg.nodes.map(n=>[n.id,effective(n)])),shown=new Map(nodes.map(n=>[n.id,n])),offsets=new Map(pg.nodes.map(n=>[n.id,{x:0,y:0}]));
  const conflicts=[];if(options.autoSpace===false&&!compact)return {offsets,conflicts,units:[]};
  const units=layoutUnits(pg),gap=Number.isFinite(options.branchGap)?Math.max(24,options.branchGap):64;
- const locked=nodes.filter(n=>n.locked&&!n.anchorId);const placed=[...locked];
+ const annotation=n=>n.type==='comment'||n.type==='note'&&!n.flowNode;const forkOffsets=new Map(),g=graph(pg);const locked=nodes.filter(n=>n.locked&&!n.anchorId&&!annotation(n));const placed=[...locked];
+ function packForks(list){
+  if(!compact||!options.hidden?.size)return;
+  const local=new Set(list.map(n=>n.id));
+  // Folded inner branches shrink before their outer envelope is packed.
+  const parents=list.filter(n=>!n.table&&n.type!=='decision'&&!annotation(n)).sort((a,b)=>descendants(pg,a.id,g).size-descendants(pg,b.id,g).size);
+  for(const parent of parents){const all=descendants(pg,parent.id,g);if(![...all].some(id=>options.hidden.has(id)))continue;
+   const links=pg.edges.filter(e=>e.source===parent.id&&C.edgeRelationship(pg,e)?.parent===parent.id&&!C.edgeRelationship(pg,e)?.annotation),heads=[...new Set(links.map(e=>e.target))].map(id=>shown.get(id)).filter(n=>n&&local.has(n.id));
+   if(heads.length<2||heads.some(n=>n.x<parent.x+parent.w))continue;
+   const branches=heads.map(n=>({n,ids:new Set([n.id,...descendants(pg,n.id,g)])})),counts=new Map();for(const b of branches)for(const id of b.ids)counts.set(id,(counts.get(id)||0)+1);
+   for(const b of branches)b.ids=new Set([...b.ids].filter(id=>counts.get(id)===1&&id!==parent.id));
+   if(branches.some(b=>[...b.ids].some(id=>{const n=shown.get(id);return n?.locked&&!annotation(n)})))continue;
+   const bounds=b=>C.bounds([...b.ids].map(id=>shown.get(id)).filter(n=>n&&!n.anchorId&&!annotation(n)));
+   branches.sort((a,b)=>bounds(a).y-bounds(b).y);let cursor=null;
+   for(const b of branches){const box=bounds(b),dy=cursor===null?0:cursor-box.y;
+    if(dy)for(const id of b.ids){const n=shown.get(id);if(n&&!n.locked&&!n.anchorId)n.y+=dy;if(!g.byId.get(id)?.locked)forkOffsets.set(id,(forkOffsets.get(id)||0)+dy);}
+    cursor=box.y+dy+box.h+gap;
+   }
+  }
+ }
  function resolve(list){
-  const anchors=list.filter(n=>!n.anchorId),local=anchors.filter(n=>n.locked);
+  packForks(list);
+  const anchors=list.filter(n=>!n.anchorId&&!annotation(n)),local=anchors.filter(n=>n.locked);
   const loose=anchors.filter(n=>!n.locked).sort((a,b)=>a.y-b.y||a.x-b.x||a.id.localeCompare(b.id));
   for(const n of loose){if(options.autoSpace!==false){for(let pass=0;pass<=local.length;pass++){const hits=local.filter(q=>intersects(n,q,18));if(!hits.length)break;n.y=Math.max(...hits.map(q=>q.y+q.h))+24;}}local.push(n);}
  }
  let cursor=null;
  for(const unit of units.filter(u=>!u.outside)){
   const list=[...unit.members].map(id=>shown.get(id)).filter(Boolean);if(!list.length)continue;resolve(list);
-  let bb=C.bounds(list.filter(n=>!n.anchorId));let shift=cursor===null?0:(compact?cursor-bb.y:Math.max(0,cursor-bb.y));
+  let bb=C.bounds(list.filter(n=>!n.anchorId&&!annotation(n)).length?list.filter(n=>!n.anchorId&&!annotation(n)):list);let shift=cursor===null?0:(compact?cursor-bb.y:Math.max(0,cursor-bb.y));
   if(options.autoSpace===false&&!compact)shift=0;
-  if(list.some(n=>n.locked))shift=0;
+  if(list.some(n=>n.locked&&!annotation(n)))shift=0;
   if(shift)for(const n of list)if(!n.locked&&!n.anchorId)n.y+=shift;
   // Avoid fixed obstacles / previous envelopes with intersecting columns.
   if(options.autoSpace!==false)for(let pass=0;pass<=placed.length;pass++){
-   let dy=0;for(const n of list)if(!n.locked&&!n.anchorId)for(const q of placed)if(q.id!==n.id&&intersects(n,q,18))dy=Math.max(dy,q.y+q.h+24-n.y);
+   let dy=0;for(const n of list)if(!n.locked&&!n.anchorId&&!annotation(n))for(const q of placed)if(q.id!==n.id&&intersects(n,q,18))dy=Math.max(dy,q.y+q.h+24-n.y);
    if(dy<=0)break;for(const n of list)if(!n.locked&&!n.anchorId)n.y+=dy;shift+=dy;
   }
-  bb=C.bounds(list.filter(n=>!n.anchorId));cursor=cursor===null?bb.y+bb.h+gap:Math.max(cursor,bb.y+bb.h+gap);
+  bb=C.bounds(list.filter(n=>!n.anchorId&&!annotation(n)).length?list.filter(n=>!n.anchorId&&!annotation(n)):list);cursor=cursor===null?bb.y+bb.h+gap:Math.max(cursor,bb.y+bb.h+gap);
   // Hidden contents move with their own envelope, not with an arbitrary sibling root.
-  for(const id of unit.members){const n=raw.get(id);if(n&&!n.locked)offsets.set(id,{x:0,y:shift});}
-  for(const n of list)if(!n.locked&&!n.anchorId)placed.push(n);
+  for(const id of unit.members){const n=raw.get(id);if(n&&!n.locked)offsets.set(id,{x:0,y:shift+(forkOffsets.get(id)||0)});}
+  for(const n of list)if(!n.locked&&!n.anchorId&&!annotation(n))placed.push(n);
  }
  const outside=units.find(u=>u.outside);if(outside&&options.autoSpace!==false){
-  for(const id of outside.members){const n=shown.get(id);if(!n||n.locked||n.anchorId)continue;
+  for(const id of outside.members){const n=shown.get(id);if(!n||n.locked||n.anchorId||annotation(n))continue;
    // A fan-out parent follows the centre of its visible direct destinations in auto layout.
    const targets=(graph(pg).adj.get(id)||[]).map(k=>shown.get(k)).filter(Boolean);
    if(targets.length>1&&targets.every(t=>t.x>n.x+n.w))n.y=(Math.min(...targets.map(t=>t.y+t.h/2))+Math.max(...targets.map(t=>t.y+t.h/2)))/2-n.h/2;
@@ -476,12 +496,14 @@ function spaceBranches(pg,nodes,compact,options={}){
 function display(pg,collapsed=new Set(),compact=true,folded=new Set(),options={}){
  if(pg.collapseMode==='groups'||!pg.collapseMode&&(pg.groups||[]).length&&!pg.nodes.some(n=>n.collapsible))return prior.display(pg,collapsed,compact,folded);
  options={...(pg.layoutOptions||{}),...options};const state=collapseState(pg,collapsed),map=new Map(),nodes=[];
+ const rowState=options.collapsedRows?.size&&C.rowCollapseState?C.rowCollapseState(pg,options.collapsedRows,collapsed):null;
+ if(rowState)for(const id of rowState.hidden){state.hidden.add(id);state.visible.delete(id);state.owner.set(id,rowState.owner.get(id));}
  for(const n of pg.nodes){if(state.hidden.has(n.id)){map.set(n.id,state.owner.get(n.id));continue;}
   const v=effective(n);if(n.table){v.h=folded.has(n.id)?74+(C.tableMetrics(v).footer||0):C.tableMetrics(v).total;v.tableFolded=folded.has(n.id);}
   const ds=state.sets.get(n.id)||new Set();v.hiddenCount=[...ds].filter(id=>state.hidden.has(id)).length;v.sharedVisibleCount=[...ds].filter(id=>state.visible.has(id)).length;
   nodes.push(v);map.set(n.id,n.id);
  }
- const layout=spaceBranches(pg,nodes,compact,options);
+ const layout=spaceBranches(pg,nodes,compact,{...options,hidden:state.hidden});
  for(const n of nodes)if(n.anchorId){const host=nodes.find(x=>x.id===n.anchorId);if(host){n.x=host.x+(n.anchorX||0);n.y=host.y+(n.anchorY||0);}}
  const edges=[],dedupe=new Map();for(const e of pg.edges){const sh=state.hidden.has(e.source),th=state.hidden.has(e.target);if(sh&&th)continue;
   const source=map.get(e.source),target=map.get(e.target);if(!source||!target||(source===target&&e.source!==e.target))continue;
@@ -490,7 +512,8 @@ function display(pg,collapsed=new Set(),compact=true,folded=new Set(),options={}
   if(sh&&state.roots.includes(e.target)&&state.sets.get(e.target)?.has(e.source))continue;
   const proxy=sh||th,key=proxy?[source,target,e.arrow!==false,e.dashed===true,e.flow===false].join('|'):'edge:'+e.id;
   if(dedupe.has(key)){const out=dedupe.get(key);out.count++;out.originalIds.push(e.id);continue;}
-  const out={...e,source,target,sourcePort:sh?'right':e.sourcePort,targetPort:th?'left':e.targetPort,proxy,count:1,originalIds:[e.id]};
+  const rowOwner=sh&&rowState?.owners.get(e.source),rowNode=rowOwner?.row&&pg.nodes.find(n=>n.id===source),rowPort=rowNode&&C.ports(rowNode).find(p=>p.rowId===rowOwner.row&&p.side==='right');
+  const out={...e,source,target,sourcePort:sh?(rowPort?.id||'right'):e.sourcePort,targetPort:th?'left':e.targetPort,proxy,count:1,originalIds:[e.id]};
   if(proxy){delete out.waypoints;delete out.points;delete out.bus;}edges.push(out);dedupe.set(key,out);
  }
  return {nodes,edges,frames:[],map,hidden:state.hidden,hiddenOwner:state.owner,collapseState:state,buses:pg.buses||[],layoutOffsets:layout.offsets,layoutConflicts:layout.conflicts,units:layout.units};
@@ -883,19 +906,19 @@ Object.assign(C,{cellMaterialIds,initTable,tableAxis,mergeTable,splitTable,table
  const C=root.Core,prev={...C};
  const vectors={left:{x:-1,y:0},right:{x:1,y:0},top:{x:0,y:-1},bottom:{x:0,y:1}};
  function simplify(points){const out=[];for(const p of points){if(out.length&&Math.hypot(p.x-out.at(-1).x,p.y-out.at(-1).y)<.001)continue;out.push({...p});while(out.length>2){const [a,b,c]=out.slice(-3);if(Math.abs((b.x-a.x)*(c.y-b.y)-(b.y-a.y)*(c.x-b.x))>.001)break;out.splice(out.length-2,1);}}return out;}
- function descendants(pg,id){const seen=new Set([id]),queue=[id];for(let i=0;i<queue.length;i++)for(const e of pg.edges)if(e.flow!==false&&e.source===queue[i]&&!seen.has(e.target)){seen.add(e.target);queue.push(e.target);}seen.delete(id);return seen;}
+ function descendants(pg,id){return C.relativeDescendantsGraph?C.relativeDescendantsGraph(pg,id):C.descendants(pg,id);}
  function dragPlan(pg,selection,folds,mode){const plan=prev.dragPlan(pg,selection,folds,mode);for(const id of [...plan.ids])if(pg.nodes.find(n=>n.id===id)?.relativeLock)for(const next of descendants(pg,id))plan.ids.add(next);for(let i=0;i<pg.nodes.length;i++){let changed=false;for(const n of pg.nodes)if(n.anchorId&&plan.ids.has(n.anchorId)&&!plan.ids.has(n.id)){plan.ids.add(n.id);changed=true;}if(!changed)break;}plan.locked=[...plan.ids].filter(id=>pg.nodes.find(n=>n.id===id)?.locked);return plan;}
  function display(pg,folds=new Set(),compact=true,folded=new Set(),options={}){
   const sized={...pg,nodes:pg.nodes.map(n=>n.table&&C.fitTableWords?C.fitTableWords(n):n.autoSize&&C.measureNode?{...n,...C.measureNode(n)}:n),buses:(pg.buses||[]).map(b=>b.autoAlign!==undefined?{...b,symmetry:false}:b)};
   const d=prev.display(sized,folds,compact,folded,options),shown=new Map(d.nodes.map(n=>[n.id,n])),offsets=d.layoutOffsets||new Map();
-  const shift=(ids,key,delta)=>{d.layoutOffsets=offsets;for(const id of ids){const n=shown.get(id);if(!n||n.anchorId)continue;n[key]+=delta;const o=offsets.get(id)||{x:0,y:0};offsets.set(id,{...o,[key]:o[key]+delta});}};
+  const shift=(ids,key,delta)=>{d.layoutOffsets=offsets;for(const id of ids){const n=shown.get(id);if(!n||n.anchorId||n.locked||n.editLocked)continue;n[key]+=delta;const o=offsets.get(id)||{x:0,y:0};offsets.set(id,{...o,[key]:o[key]+delta});}};
   for(const bus of pg.buses||[]){if(!bus.autoAlign||!['in','out'].includes(bus.mode))continue;const hub=shown.get(bus.hub);if(!hub)continue;const es=d.edges.filter(e=>e.bus===bus.id&&!e.proxy),ids=[...new Set(es.map(e=>bus.mode==='out'?e.target:e.source))],heads=ids.map(id=>shown.get(id));if(heads.length<2||heads.some(n=>!n||n.locked))continue;
    const port=C.endpoint(hub,bus.port,bus.mode==='in'?'left':'right'),axis=['left','right'].includes(port.side)?'y':'x',size=axis==='y'?'h':'w',gap=Math.max(16,Number(bus.alignGap)||64);
    const branches=heads.map(n=>{const own=new Set([n.id]);if(bus.mode==='out')for(const id of descendants(pg,n.id))own.add(id);own.delete(hub.id);return {n,own};});
-   if(branches.some(b=>[...b.own].some(id=>shown.get(id)?.locked)))continue;
+   if(branches.some(b=>[...b.own].some(id=>{const n=shown.get(id);return n?.locked&&n.type!=='comment'&&(n.type!=='note'||n.flowNode)})))continue;
    // Shared downstream nodes keep their position; each exclusive branch moves once.
    const counts=new Map();for(const b of branches)for(const id of b.own)counts.set(id,(counts.get(id)||0)+1);for(const b of branches)b.own=new Set([...b.own].filter(id=>counts.get(id)===1));
-   branches.sort((a,b)=>a.n[axis]-b.n[axis]);const boxes=branches.map(b=>C.bounds([...b.own].map(id=>shown.get(id)).filter(n=>n&&!n.anchorId))),span=boxes.reduce((s,b)=>s+b[size],0)+gap*(heads.length-1);let cursor=port[axis]-span/2;
+   branches.sort((a,b)=>a.n[axis]-b.n[axis]);const boxes=branches.map(b=>C.bounds([...b.own].map(id=>shown.get(id)).filter(n=>n&&!n.anchorId&&n.type!=='comment'&&(n.type!=='note'||n.flowNode)))),span=boxes.reduce((s,b)=>s+b[size],0)+gap*(heads.length-1);let cursor=port[axis]-span/2;
    branches.forEach((b,i)=>{shift(b.own,axis,cursor-boxes[i][axis]);cursor+=boxes[i][size]+gap;});
   }
   for(const n of d.nodes)if(n.anchorId){const host=shown.get(n.anchorId);if(host){n.x=host.x+(n.anchorX||0);n.y=host.y+(n.anchorY||0);}}
@@ -1007,10 +1030,10 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
 (function(C){
  const previous={...C};
  const rowKey=(node,row)=>node+'::'+row;
- function rowContinuations(pg){return pg.nodes.flatMap(n=>!n.table?[]:n.table.rowIds.map((id,index)=>({node:n.id,row:id,index,key:rowKey(n.id,id),edges:pg.edges.filter(e=>e.source===n.id&&e.flow!==false&&C.port(n,e.sourcePort,'right').rowId===id)})));}
+ function rowContinuations(pg){return pg.nodes.flatMap(n=>!n.table?[]:n.table.rowIds.map((id,index)=>({node:n.id,row:id,index,key:rowKey(n.id,id),edges:pg.edges.filter(e=>{const rel=C.edgeRelationship?.(pg,e);return (rel?rel.parent===n.id:e.source===n.id&&e.flow!==false)&&C.port(n,e.source===n.id?e.sourcePort:e.targetPort,'right').rowId===id;})})));}
  function rowCollapseState(pg,rows=new Set(),folds=new Set()){
   const controls=rowContinuations(pg),virtual=new Map(controls.map(r=>[r.key,'row:'+r.key])),ports=new Map(pg.nodes.map(n=>[n.id,n]));
-  const nodes=pg.nodes.map(n=>({...n})),edges=pg.edges.map(e=>{const n=ports.get(e.source),r=n?.table&&C.port(n,e.sourcePort,'right').rowId,key=r&&rowKey(n.id,r);return virtual.has(key)?{...e,source:virtual.get(key)}:{...e};}),collapsed=new Set(folds);
+  const nodes=pg.nodes.map(n=>({...n})),edges=pg.edges.map(e=>{const rel=C.edgeRelationship?.(pg,e),parent=rel?.parent||e.source,n=ports.get(parent),side=e.source===parent?'source':'target',r=n?.table&&C.port(n,e[side+'Port'],'right').rowId,key=r&&rowKey(n.id,r);return virtual.has(key)?{...e,[side]:virtual.get(key)}:{...e};}),collapsed=new Set(folds);
   for(const r of controls){nodes.push({id:virtual.get(r.key),type:'text',collapsible:true});edges.push({id:'row-owner:'+r.key,source:r.node,target:virtual.get(r.key),flow:true});if(rows.has(r.key))collapsed.add(virtual.get(r.key));}
   const state=previous.collapseState({...pg,nodes,edges},collapsed),hidden=new Set([...state.hidden].filter(id=>ports.has(id))),owner=new Map(),owners=new Map(),counts=new Map();
   for(const r of controls){if(rows.has(r.key))hidden.delete(r.node);counts.set(r.key,[...(state.sets.get(virtual.get(r.key))||[])].filter(id=>hidden.has(id)).length);}
@@ -1060,3 +1083,63 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
  }
  Object.assign(C,{removeMaterial});
 })(globalThis.Core);
+
+/* 0.7.5: explicit ownership, scoped symmetry and mixed selection. */
+(function(C){
+ const prev={...C},annotation=n=>n?.type==='comment'||n?.type==='note'&&!n.flowNode;
+ function edgeRelationship(pg,e){const a=pg.nodes.find(n=>n.id===e.source),b=pg.nodes.find(n=>n.id===e.target);if(!a||!b||a.id===b.id)return null;
+  // Comments belong to their neighbour regardless of the visible arrow direction.
+  if((a.type==='comment')!==(b.type==='comment'))return {parent:a.type==='comment'?b.id:a.id,child:a.type==='comment'?a.id:b.id,annotation:true};
+  if(e.parentRole==='none'||e.flow===false)return null;
+  if(e.parentRole==='source'||e.parentRole==='target')return {parent:e.parentRole==='source'?a.id:b.id,child:e.parentRole==='source'?b.id:a.id,annotation:false};
+  if(e.role!=='flow'&&annotation(a)!==annotation(b))return {parent:annotation(a)?b.id:a.id,child:annotation(a)?a.id:b.id,annotation:true};
+  return {parent:a.id,child:b.id,annotation:false};
+ }
+ function relativeDescendantsGraph(pg,id){const g=C.graph(pg),out=new Set(),queue=[id];for(let i=0;i<queue.length;i++)for(const next of g.adj.get(queue[i])||[])if(next!==id&&!out.has(next)){out.add(next);queue.push(next);}return out;}
+ function normalizeV6(p){const tableSizes=new Map(p.pages.flatMap(pg=>pg.nodes.filter(n=>n.table).map(n=>[pg.id+'::'+n.id,{w:n.w,h:n.h}]))),globals=new Map(p.pages.map(pg=>[pg.id,pg.layoutOptions?.busSymmetry===true]));prev.normalizeV6(p);for(const pg of p.pages){for(const b of pg.buses||[]){if(b.symmetry===undefined)b.symmetry=b.autoAlign??globals.get(pg.id);b.autoAlign=!!b.symmetry;b.alignGap||=pg.layoutOptions.symmetryGap||64;}for(const n of pg.nodes){const size=tableSizes.get(pg.id+'::'+n.id);if(size&&Number.isFinite(size.w)&&Number.isFinite(size.h)){n.w=size.w;n.h=size.h;}if(n.type==='decision'&&n.branchSymmetry===undefined)n.branchSymmetry=globals.get(pg.id);}pg.layoutOptions.busSymmetry=false;}return p;}
+ function alignTargets(pg,d,hub,edges,axis,gap){const shown=new Map(d.nodes.map(n=>[n.id,n])),heads=[...new Set(edges.map(e=>e.target))].map(id=>shown.get(id)).filter(Boolean);if(heads.length<2)return;
+  const size=axis==='y'?'h':'w',perp=axis==='y'?'x':'y',parent=shown.get(hub);if(!parent)return;heads.sort((a,b)=>a[axis]-b[axis]);
+  const branches=heads.map(n=>({n,ids:new Set([n.id,...relativeDescendantsGraph(pg,n.id)])}));for(const b of branches)b.ids.delete(hub);
+  const count=new Map();for(const b of branches)for(const id of b.ids)count.set(id,(count.get(id)||0)+1);
+  for(const b of branches)b.ids=new Set([...b.ids].filter(id=>count.get(id)===1));
+  if(branches.some(b=>[...b.ids].some(id=>{const n=shown.get(id);return n&&!annotation(n)&&(n.locked||n.editLocked)})))return;
+  const step=Math.max(Math.max(...heads.map(n=>n[size]))+gap,parent[size]+gap),mid=parent[axis]+parent[size]/2;
+  const edgeFor=n=>edges.find(e=>e.target===n.id),end=n=>C.endpoint(n,edgeFor(n).targetPort,'left');
+  const common=Math.max(...heads.map(n=>end(n)[perp]));
+  for(let i=0;i<branches.length;i++){const b=branches[i],point=end(b.n),delta=mid+(i-(branches.length-1)/2)*step-point[axis],cross=common-point[perp];for(const id of b.ids){const n=shown.get(id);if(!n||n.anchorId||n.locked||n.editLocked)continue;n[axis]+=delta;n[perp]+=cross;const o=d.layoutOffsets.get(id)||{x:0,y:0};d.layoutOffsets.set(id,{...o,[axis]:o[axis]+delta,[perp]:o[perp]+cross});}}
+  (d.symmetryGroups||=[]).push({parent:hub,heads:heads.map(n=>n.id)});
+ }
+ function display(pg,folds=new Set(),compact=true,folded=new Set(),options={}){const protectedPg={...pg,nodes:pg.nodes.map(n=>n.editLocked?{...n,locked:true}:n),buses:(pg.buses||[]).map(b=>b.symmetry===undefined?b:{...b,autoAlign:b.mode!=='free'&&b.symmetry})};
+  const d=prev.display(protectedPg,folds,compact,folded,options),hadOffsets=!!d.layoutOffsets;d.layoutOffsets||=new Map();
+  for(const n of pg.nodes)if(n.type==='decision'&&n.branchSymmetry){const edges=d.edges.filter(e=>e.source===n.id&&!e.proxy&&!e.bus&&!edgeRelationship(pg,e)?.annotation);const sides=edges.map(e=>C.port(n,e.sourcePort).side),axis=sides.includes('left')&&sides.includes('right')?'x':'y';alignTargets(pg,d,n.id,edges,axis,Math.max(16,Number(n.branchGap)||64));}
+  for(const b of pg.buses||[])if(b.mode==='free'&&b.symmetry){const edges=d.edges.filter(e=>e.bus===b.id&&!e.proxy),axis=b.orientation==='horizontal'?'x':'y',size=axis==='y'?'h':'w',shown=new Map(d.nodes.map(n=>[n.id,n]));const sources=[...new Set(edges.map(e=>e.source))].map(id=>shown.get(id)).filter(Boolean),targets=[...new Set(edges.map(e=>e.target))].map(id=>shown.get(id)).filter(Boolean),groups=[sources,targets];if(groups.flat().some(n=>n.locked||n.editLocked))continue;const mid=groups.flat().reduce((s,n)=>s+n[axis]+n[size]/2,0)/Math.max(1,groups.flat().length),gap=Math.max(16,b.alignGap||64);for(const group of groups){group.sort((a,b)=>a[axis]-b[axis]);const span=group.reduce((s,n)=>s+n[size],0)+gap*(group.length-1);let cursor=mid-span/2;for(const n of group){const delta=cursor-n[axis];n[axis]+=delta;const o=d.layoutOffsets.get(n.id)||{x:0,y:0};d.layoutOffsets.set(n.id,{...o,[axis]:o[axis]+delta});cursor+=n[size]+gap;}}}
+  // An annotation follows any layout movement of its host; it cannot push its host away.
+  const shown=new Map(d.nodes.map(n=>[n.id,n])),raw=new Map(pg.nodes.map(n=>[n.id,n])),owners=new Map();for(const e of pg.edges){const r=edgeRelationship(pg,e);if(r?.annotation&&!owners.has(r.child))owners.set(r.child,r.parent);}
+  for(const [child,parent] of owners){const n=shown.get(child),host=shown.get(parent),o=raw.get(child),h=raw.get(parent);if(!n||!host||!o||!h||n.locked||n.editLocked)continue;n.x=o.x+(o.offsetX||0)+host.x-h.x-(h.offsetX||0);n.y=o.y+(o.offsetY||0)+host.y-h.y-(h.offsetY||0);d.layoutOffsets.set(child,{x:n.x-o.x-(o.offsetX||0),y:n.y-o.y-(o.offsetY||0)});}
+  for(const n of d.nodes)if(raw.has(n.id))n.locked=!!raw.get(n.id).locked;if(!hadOffsets&&!d.layoutOffsets.size)delete d.layoutOffsets;return d;
+ }
+ function dragPlan(pg,selection,folds=new Set(),mode={}){return prev.dragPlan({...pg,nodes:pg.nodes.map(n=>n.editLocked?{...n,locked:true}:n)},selection,folds,mode);}
+ function rectangleHits(d,pg,rect,contain=true){const inside=p=>p.x>=rect.x&&p.x<=rect.x+rect.w&&p.y>=rect.y&&p.y<=rect.y+rect.h,box=n=>contain?n.x>=rect.x&&n.y>=rect.y&&n.x+n.w<=rect.x+rect.w&&n.y+n.h<=rect.y+rect.h:n.x<=rect.x+rect.w&&n.x+n.w>=rect.x&&n.y<=rect.y+rect.h&&n.y+n.h>=rect.y;
+  const segment=(a,b)=>{if(inside(a)||inside(b))return true;let t0=0,t1=1;for(const [p,q] of [[a.x-b.x,a.x-rect.x],[b.x-a.x,rect.x+rect.w-a.x],[a.y-b.y,a.y-rect.y],[b.y-a.y,rect.y+rect.h-a.y]]){if(!p){if(q<0)return false;}else{const t=q/p;if(p<0)t0=Math.max(t0,t);else t1=Math.min(t1,t);if(t0>t1)return false;}}return true;};
+  const path=points=>points.length&&(contain?points.every(inside):points.some((p,i)=>i&&segment(points[i-1],p))),nodes=new Set(d.nodes.filter(n=>n.type!=='summary'&&box(n)).map(n=>n.id)),edges=new Set(),drawings=new Set(),buses=new Set(),ns=new Map(d.nodes.map(n=>[n.id,n])),bundle=C.bundleRoutes(d);for(const e of d.edges)if(!e.proxy&&path(bundle.routes.get(e.id)?.points||C.edgePath(e,ns)?.points||[]))edges.add(e.id);for(const b of bundle.buses){const parts=[b.lead,b.trunk,...(b.segments||[]),...d.edges.filter(e=>e.bus===b.id).map(e=>bundle.routes.get(e.id))].filter(p=>p?.points?.length);if(parts.length&&(contain?parts.every(p=>path(p.points)):parts.some(p=>path(p.points)))){buses.add(b.id);for(const e of d.edges)if(e.bus===b.id)edges.delete(e.id);}}
+  for(const drawing of pg.drawings||[]){const host=drawing.anchor&&ns.get(drawing.anchor);if(drawing.anchor&&!host)continue;const points=(drawing.points||[]).map(p=>({x:p.x+(host?.x||0),y:p.y+(host?.y||0)}));if(['rect','ellipse'].includes(drawing.type)&&points.length>1){const a=points[0],b=points.at(-1);if(box({x:Math.min(a.x,b.x),y:Math.min(a.y,b.y),w:Math.abs(a.x-b.x),h:Math.abs(a.y-b.y)}))drawings.add(drawing.id);}else if(path(points))drawings.add(drawing.id);}return {nodes,edges,drawings,buses};
+ }
+ function bulkPatch(pg,selection,patch,category='all'){const out=C.clone(pg);for(const [list,kind] of [['nodes','node'],['edges','edge'],['buses','bus'],['drawings','drawing']])for(const item of out[list]||[]){if(!(selection[kind]||[]).includes(item.id)||(category!=='all'&&category!==(kind==='node'?item.type:kind)))continue;if(item.editLocked&&!Object.hasOwn(patch,'editLocked'))continue;for(const [key,value] of Object.entries(patch)){const allowed={node:['editLocked','color','fill','fontSize','relativeLock','collapsible','locked','autoSize','tableAutoSize','tableWordWrap','branchSymmetry','branchGap'],edge:['editLocked','color','arrow','arrowStart','dashed','parentRole','style','labelCentered'],bus:['editLocked','color','symmetry','alignGap','style'],drawing:['editLocked','color','width']};if(!allowed[kind].includes(key)||(key.startsWith('branch')&&item.type!=='decision')||(key.startsWith('table')&&!item.table))continue;if(key==='color'){item[kind==='drawing'?'color':kind==='node'?'stroke':'stroke']=value;}else if(key==='tableAutoSize'&&item.table)C.setTableAutoSize(item,value);else if(key==='tableWordWrap'&&item.table)item.table.wordWrap=value;else if(key==='symmetry'&&kind==='bus'){item.symmetry=value;item.autoAlign=value;}else if(key==='autoSize'&&kind==='node'){if(value){item.autoBaseW=item.w;item.autoBaseH=item.h;}item.autoSize=value;}else item[key]=value;}}return out;}
+ Object.assign(C,{edgeRelationship,relativeDescendantsGraph,normalizeV6,display,dragPlan,rectangleHits,bulkPatch});
+})(globalThis.Core);
+
+/* Deletion keeps protected objects and their required endpoints intact. */
+Core.deleteSelection=function(pg,selection){
+ const nodes=new Set(selection.node||[]),edges=new Set(selection.edge||[]),drawings=new Set(selection.drawing||[]),buses=new Set(selection.bus||[]);
+ for(const n of pg.nodes)if(n.editLocked)nodes.delete(n.id);
+ for(const e of pg.edges)if(e.editLocked){nodes.delete(e.source);nodes.delete(e.target);edges.delete(e.id);buses.delete(e.bus);}
+ for(const d of pg.drawings||[])if(d.editLocked){nodes.delete(d.anchor);drawings.delete(d.id);}
+ for(const b of pg.buses||[])if(b.editLocked){buses.delete(b.id);for(const e of pg.edges.filter(e=>e.bus===b.id)){edges.delete(e.id);nodes.delete(e.source);nodes.delete(e.target);}}
+ for(const n of pg.nodes)if(n.anchorId&&nodes.has(n.anchorId)&&!n.editLocked)nodes.add(n.id);
+ const out=Core.clone(pg);out.nodes=out.nodes.filter(n=>!nodes.has(n.id));out.edges=out.edges.filter(e=>!edges.has(e.id)&&!nodes.has(e.source)&&!nodes.has(e.target));out.drawings=(out.drawings||[]).filter(d=>!drawings.has(d.id)&&!nodes.has(d.anchor));out.groups?.forEach(g=>g.members=g.members.filter(id=>!nodes.has(id)));out.buses=(out.buses||[]).filter(b=>!buses.has(b.id));for(const e of out.edges)if(buses.has(e.bus))delete e.bus;Core.cleanBuses(out);return JSON.stringify(out)===JSON.stringify(pg)?pg:out;
+};
+
+(function(C){const arrange=C.arrange,autoLayout=C.autoLayout;
+ C.arrange=(pg,ids,mode)=>arrange(pg,ids.filter(id=>!pg.nodes.find(n=>n.id===id)?.editLocked),mode);
+ C.autoLayout=(pg,group)=>{const model={...pg,edges:pg.edges.map(e=>{const r=C.edgeRelationship(pg,e);return r?{...e,source:r.parent,target:r.child}:null}).filter(Boolean)},out=autoLayout(model,group);out.edges=C.clone(pg.edges);for(let i=0;i<out.nodes.length;i++)if(pg.nodes[i].editLocked)out.nodes[i]=C.clone(pg.nodes[i]);return out;};
+})(Core);

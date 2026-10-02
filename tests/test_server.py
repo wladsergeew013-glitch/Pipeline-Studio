@@ -175,4 +175,17 @@ class ServerTests(unittest.TestCase):
         p['deletedMaterials']=[{'id':p['materials'][0]['id'],'version':p['materials'][0].get('version',1)}]
         self.assertEqual(self.editor.call('/api/project','PUT',p)[0],400);self.assertEqual(self.project()['revision'],revision)
 
+    def test_23_v075_ownership_protection_and_scoped_symmetry_roundtrip(self):
+        p=self.project();pg=p['pages'][0]
+        n=pg['nodes'][0];n['editLocked']=True;n['branchSymmetry']=True;n['branchGap']=72
+        comment=dict(n,id='v075-comment',type='comment',editLocked=False,title='Комментарий')
+        pg['nodes'].append(comment)
+        pg['edges'].append({'id':'v075-relation','source':comment['id'],'target':n['id'],'sourcePort':'right','targetPort':'left','arrow':False,'arrowStart':True,'parentRole':'target','editLocked':True})
+        status,result,_=self.editor.call('/api/project','PUT',p);self.assertEqual(status,200,result)
+        out=self.project()['pages'][0]
+        self.assertTrue(next(x for x in out['nodes'] if x['id']==n['id'])['editLocked'])
+        self.assertEqual(next(x for x in out['nodes'] if x['id']==comment['id'])['type'],'comment')
+        relation=next(e for e in out['edges'] if e['id']=='v075-relation')
+        self.assertEqual(relation['parentRole'],'target');self.assertTrue(relation['editLocked']);self.assertTrue(relation['arrowStart'])
+
 if __name__=='__main__':unittest.main(verbosity=2)

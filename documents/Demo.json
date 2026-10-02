@@ -44,7 +44,7 @@
           "x": 330,
           "y": 130,
           "w": 320,
-          "h": 183,
+          "h": 220,
           "fontSize": 16,
           "materials": [],
           "icons": [],
@@ -174,7 +174,8 @@
           "relativeLock": true,
           "autoSize": true,
           "locked": false,
-          "collapsible": false
+          "collapsible": false,
+          "branchSymmetry": false
         },
         {
           "id": "done",
