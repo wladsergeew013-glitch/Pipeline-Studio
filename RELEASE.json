@@ -1,15 +1,17 @@
 {
   "version": "0.7.2",
   "schemaVersion": 6,
-  "publicRelease": false,
+  "publicRelease": true,
   "fullLocalChecksPassed": 281,
   "fullLocalChecksSkipped": 1,
   "report": "docs/VALIDATION.md",
-  "status": "local-tested-release",
+  "status": "public-release",
   "sourceChecks": {
     "model": 65,
     "browser": 32,
     "http": 18,
     "optionalSkipped": 1
-  }
+  },
+  "releaseDate": "2026-10-02",
+  "repository": "https://github.com/wladsergeew013-glitch/Pipeline-Studio"
 }
