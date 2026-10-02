@@ -133,4 +133,16 @@ class ServerTests(unittest.TestCase):
         out=self.project();self.assertEqual(out['schemaVersion'],4);self.assertEqual(out['pages'][0]['buses'][0]['offset'],91)
         self.assertTrue(out['pages'][0]['layoutOptions']['autoSpace']);self.assertTrue(out['pages'][0]['nodes'][0]['flowNode'])
 
+    def test_18_internal_block_link_and_start_arrow_roundtrip(self):
+        p=self.project();pg=p['pages'][0];node=pg['nodes'][0]
+        target={'pageId':pg['id'],'nodeId':pg['nodes'][1]['id']}
+        m={'id':'qa-internal','title':'Internal target','kind':'node','target':target,'version':1}
+        p['materials'].append(m);node.setdefault('materials',[]).append(m['id']);pg['edges'][0]['arrowStart']=True
+        status,res,_=self.editor.call('/api/project','PUT',p);self.assertEqual(status,200,res)
+        out=self.project();saved=next(m for m in out['materials'] if m['id']=='qa-internal')
+        self.assertEqual(saved['target'],target);self.assertEqual(saved['kind'],'node');self.assertTrue(out['pages'][0]['edges'][0]['arrowStart'])
+        status,pub,_=self.editor.call('/api/publish','POST',{'title':'Internal-link test'});self.assertEqual(status,200,pub)
+        status,published,_=self.reader.call('/api/published/'+pub['id']);self.assertEqual(status,200)
+        self.assertEqual(next(m for m in published['materials'] if m['id']=='qa-internal')['target'],target)
+
 if __name__=='__main__':unittest.main(verbosity=2)

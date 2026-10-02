@@ -44,3 +44,5 @@ Thumbs.db
 /quick_v*.py
 /prepare_public.py
 /*.inc
+
+/update_v*.py

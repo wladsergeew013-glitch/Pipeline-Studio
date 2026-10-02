@@ -211,3 +211,26 @@
 .node:not(.selected) .quick-table-tools,.node:not(.selected) .quick-col-grip,.node:not(.selected) .quick-row-grip{display:none}
 .table-ribbon{flex-wrap:wrap;height:auto;padding:5px 0}
 .table-ribbon .ribbon-help{display:none}
+/* 0.7.3: compact spreadsheet ribbon and state marks outside table cells. */
+.table-ribbon{flex-wrap:wrap;gap:3px;align-items:center;padding:7px 0}
+.table-ribbon .ribbon-icon{width:29px;min-width:29px;height:29px;padding:5px;flex-shrink:0}
+.table-ribbon .ribbon-icon .ui-icon{width:18px;height:18px}
+.table-ribbon .ribbon-icon.active{background:#efefff;color:#5554e9;border-color:#cac9ff}
+.table-ribbon .ribbon-dimension{display:flex;align-items:center;gap:3px;color:#7486a5}
+.table-ribbon .ribbon-dimension input{width:58px;min-width:0;padding:4px;height:29px;font-size:11px}
+.table-ribbon .ribbon-dimension .ui-icon{width:16px;height:16px}
+.table-ribbon [hidden],#mat-internal[hidden],#mat-external[hidden]{display:none!important}
+.node.table .node-lock,.node.table.has-materials .node-lock{left:auto;right:-25px;top:9px;bottom:auto;width:19px;height:19px;color:#7584a0}
+.relative-badge{position:absolute;right:-25px;bottom:8px;color:#7889a4;pointer-events:none;width:18px;height:18px}
+.relative-badge .ui-icon{width:18px;height:18px}
+.collapse-row{position:absolute;left:-34px;width:25px;height:25px;display:flex;align-items:center;justify-content:center;padding:3px;border:1px solid #d3d9ec;border-radius:7px;background:#fff;color:#5d5be9;z-index:6;box-shadow:0 2px 5px #21365814}
+.collapse-row .ui-icon{width:17px;height:17px}
+.collapse-row small{position:absolute;right:23px;padding:2px 4px;border-radius:5px;background:#f0f0ff;font-size:10px}
+.row-behavior-option span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.edge-label{pointer-events:all;cursor:pointer}
+.edge{pointer-events:stroke;cursor:pointer}
+.recent-info small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65vw}
+.file-node,.file-page{color:#635fe9}
+.internal-target-flash{animation:internalTarget 1s ease-in-out 3}
+@keyframes internalTarget{50%{box-shadow:0 0 0 7px #635fe94a}}
+@media print{.relative-badge,.collapse-row,.node-lock{display:none!important}}

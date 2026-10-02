@@ -1,17 +1,18 @@
 {
-  "version": "0.7.2",
+  "version": "0.7.3",
   "schemaVersion": 6,
-  "publicRelease": true,
-  "fullLocalChecksPassed": 281,
-  "fullLocalChecksSkipped": 1,
+  "publicRelease": false,
   "report": "docs/VALIDATION.md",
-  "status": "public-release",
+  "status": "local-candidate",
   "sourceChecks": {
-    "model": 65,
-    "browser": 32,
-    "http": 18,
+    "model": 80,
+    "browser": 65,
+    "http": 19,
     "optionalSkipped": 1
   },
   "releaseDate": "2026-10-02",
-  "repository": "https://github.com/wladsergeew013-glitch/Pipeline-Studio"
+  "repository": "https://github.com/wladsergeew013-glitch/Pipeline-Studio",
+  "fullLocalChecksPassed": 172,
+  "fullLocalChecksSkipped": 1,
+  "workingDocumentChecks": 8
 }

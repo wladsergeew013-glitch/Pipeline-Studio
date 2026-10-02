@@ -89,6 +89,15 @@
                   "text": "Согласованный план"
                 }
               ]
+            ],
+            "rowIds": [
+              "row-4a7c7254-c95f-4924-83d7-ad8a1222fcdb",
+              "row-e0123c67-2b7c-4905-ac2d-62b920538a81",
+              "row-ec32ac8f-b7ff-4c62-b815-10c41efcac1b"
+            ],
+            "colIds": [
+              "col-32ae7753-7dae-4e43-ac67-35fc4af50265",
+              "col-5dafaf14-e49f-47d6-bdcc-4f776ef374e3"
             ]
           }
         },

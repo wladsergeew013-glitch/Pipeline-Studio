@@ -94,13 +94,13 @@
               ]
             ],
             "rowIds": [
-              "row-cef97f17-edbc-4924-a066-707b535a136f",
-              "row-3075aca4-9dd0-4703-aed8-85a98ae72757",
-              "row-8bf1ffbc-a28f-4699-a4d8-35eac01da863"
+              "row-4a7c7254-c95f-4924-83d7-ad8a1222fcdb",
+              "row-e0123c67-2b7c-4905-ac2d-62b920538a81",
+              "row-ec32ac8f-b7ff-4c62-b815-10c41efcac1b"
             ],
             "colIds": [
-              "col-86a2ed4c-3e31-4904-8cde-786478839cc5",
-              "col-76bfef64-d93b-4071-8e84-e5b63ed5cd1a"
+              "col-32ae7753-7dae-4e43-ac67-35fc4af50265",
+              "col-5dafaf14-e49f-47d6-bdcc-4f776ef374e3"
             ]
           },
           "portConfig": {
@@ -113,43 +113,43 @@
           },
           "ports": [
             {
-              "id": "row:row-cef97f17-edbc-4924-a066-707b535a136f:left",
-              "rowId": "row-cef97f17-edbc-4924-a066-707b535a136f",
+              "id": "row:row-4a7c7254-c95f-4924-83d7-ad8a1222fcdb:left",
+              "rowId": "row-4a7c7254-c95f-4924-83d7-ad8a1222fcdb",
               "side": "left",
               "x": 0,
               "y": 0.5
             },
             {
-              "id": "row:row-3075aca4-9dd0-4703-aed8-85a98ae72757:left",
-              "rowId": "row-3075aca4-9dd0-4703-aed8-85a98ae72757",
+              "id": "row:row-e0123c67-2b7c-4905-ac2d-62b920538a81:left",
+              "rowId": "row-e0123c67-2b7c-4905-ac2d-62b920538a81",
               "side": "left",
               "x": 0,
               "y": 0.5
             },
             {
-              "id": "row:row-8bf1ffbc-a28f-4699-a4d8-35eac01da863:left",
-              "rowId": "row-8bf1ffbc-a28f-4699-a4d8-35eac01da863",
+              "id": "row:row-ec32ac8f-b7ff-4c62-b815-10c41efcac1b:left",
+              "rowId": "row-ec32ac8f-b7ff-4c62-b815-10c41efcac1b",
               "side": "left",
               "x": 0,
               "y": 0.5
             },
             {
-              "id": "row:row-cef97f17-edbc-4924-a066-707b535a136f:right",
-              "rowId": "row-cef97f17-edbc-4924-a066-707b535a136f",
+              "id": "row:row-4a7c7254-c95f-4924-83d7-ad8a1222fcdb:right",
+              "rowId": "row-4a7c7254-c95f-4924-83d7-ad8a1222fcdb",
               "side": "right",
               "x": 1,
               "y": 0.5
             },
             {
-              "id": "row:row-3075aca4-9dd0-4703-aed8-85a98ae72757:right",
-              "rowId": "row-3075aca4-9dd0-4703-aed8-85a98ae72757",
+              "id": "row:row-e0123c67-2b7c-4905-ac2d-62b920538a81:right",
+              "rowId": "row-e0123c67-2b7c-4905-ac2d-62b920538a81",
               "side": "right",
               "x": 1,
               "y": 0.5
             },
             {
-              "id": "row:row-8bf1ffbc-a28f-4699-a4d8-35eac01da863:right",
-              "rowId": "row-8bf1ffbc-a28f-4699-a4d8-35eac01da863",
+              "id": "row:row-ec32ac8f-b7ff-4c62-b815-10c41efcac1b:right",
+              "rowId": "row-ec32ac8f-b7ff-4c62-b815-10c41efcac1b",
               "side": "right",
               "x": 1,
               "y": 0.5
@@ -236,7 +236,8 @@
           "sourcePort": "right",
           "targetPort": "left",
           "arrow": true,
-          "labelCentered": true
+          "labelCentered": true,
+          "arrowStart": false
         },
         {
           "id": "t-d",
@@ -245,7 +246,8 @@
           "sourcePort": "right",
           "targetPort": "left",
           "arrow": true,
-          "labelCentered": true
+          "labelCentered": true,
+          "arrowStart": false
         },
         {
           "id": "yes",
@@ -255,7 +257,8 @@
           "targetPort": "left",
           "label": "Да",
           "arrow": true,
-          "labelCentered": true
+          "labelCentered": true,
+          "arrowStart": false
         },
         {
           "id": "no",
@@ -265,7 +268,8 @@
           "targetPort": "left",
           "label": "Нет",
           "arrow": true,
-          "labelCentered": true
+          "labelCentered": true,
+          "arrowStart": false
         }
       ],
       "buses": [],

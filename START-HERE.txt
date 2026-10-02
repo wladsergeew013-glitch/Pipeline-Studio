@@ -1,4 +1,4 @@
-Pipeline Studio 0.7.2
+Pipeline Studio 0.7.3
 
 Откройте Pipeline-Studio.html в Chrome или Edge.
 Создайте документ или откройте свой HTML / JSON через стартовый экран.

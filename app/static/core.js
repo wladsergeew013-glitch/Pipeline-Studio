@@ -1002,3 +1002,47 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
  function mergeTable(t,a,b){const range=C.normalizedRange(a,b),options={};for(let r=range.r0;r<=range.r1;r++)for(let c=range.c0;c<=range.c1;c++)Object.assign(options,t.cells[r]?.[c]?.sourceOptions);const out=previous.mergeTable(t,a,b);if(Object.keys(options).length)out.cells[range.r0][range.c0].sourceOptions=options;return out;}
  Object.assign(C,{routeSegments,labelPlacement,removeVisibleSegment,moveVisibleSegment,connectionAxis,snapConnectedMove,normalizeV6,mergeTable});
 })(globalThis.Core);
+
+/* 0.7.3: per-row continuation controls and independently movable chain members. */
+(function(C){
+ const previous={...C};
+ const rowKey=(node,row)=>node+'::'+row;
+ function rowContinuations(pg){return pg.nodes.flatMap(n=>!n.table?[]:n.table.rowIds.map((id,index)=>({node:n.id,row:id,index,key:rowKey(n.id,id),edges:pg.edges.filter(e=>e.source===n.id&&e.flow!==false&&C.port(n,e.sourcePort,'right').rowId===id)})));}
+ function rowCollapseState(pg,rows=new Set(),folds=new Set()){
+  const controls=rowContinuations(pg),virtual=new Map(controls.map(r=>[r.key,'row:'+r.key])),ports=new Map(pg.nodes.map(n=>[n.id,n]));
+  const nodes=pg.nodes.map(n=>({...n})),edges=pg.edges.map(e=>{const n=ports.get(e.source),r=n?.table&&C.port(n,e.sourcePort,'right').rowId,key=r&&rowKey(n.id,r);return virtual.has(key)?{...e,source:virtual.get(key)}:{...e};}),collapsed=new Set(folds);
+  for(const r of controls){nodes.push({id:virtual.get(r.key),type:'text',collapsible:true});edges.push({id:'row-owner:'+r.key,source:r.node,target:virtual.get(r.key),flow:true});if(rows.has(r.key))collapsed.add(virtual.get(r.key));}
+  const state=previous.collapseState({...pg,nodes,edges},collapsed),hidden=new Set([...state.hidden].filter(id=>ports.has(id))),owner=new Map(),owners=new Map(),counts=new Map();
+  for(const r of controls){if(rows.has(r.key))hidden.delete(r.node);counts.set(r.key,[...(state.sets.get(virtual.get(r.key))||[])].filter(id=>hidden.has(id)).length);}
+  const decode=id=>id?.startsWith('row:')?controls.find(r=>virtual.get(r.key)===id):null;
+  for(const id of hidden){const root=state.owner.get(id),r=decode(root);owner.set(id,r?.node||root);owners.set(id,r||{node:root});}
+  return {hidden,owner,owners,counts,controls};
+ }
+ function display(pg,folds=new Set(),compact=true,folded=new Set(),options={}){
+  const d=previous.display(pg,folds,compact,folded,options),rows=options.collapsedRows||new Set();if(!rows.size)return d;
+  const state=rowCollapseState(pg,rows,folds),hidden=new Set([...d.hidden,...state.hidden]),byId=new Map(pg.nodes.map(n=>[n.id,n]));
+  d.nodes=d.nodes.filter(n=>!hidden.has(n.id));const shown=new Set(d.nodes.map(n=>n.id));
+  for(const id of state.hidden){d.hiddenOwner.set(id,state.owner.get(id));d.map.set(id,state.owner.get(id));}
+  const edges=[],seen=new Set();for(const e of d.edges){const sh=hidden.has(e.source),th=hidden.has(e.target);if(sh&&th)continue;
+   if(th)continue;let out=e;if(sh){const root=state.owners.get(e.source),source=root?.node||d.hiddenOwner.get(e.source);if(!shown.has(source)||source===e.target)continue;const rowPort=root?.row&&C.ports(byId.get(source)).find(p=>p.rowId===root.row&&p.side==='right');out={...e,source,sourcePort:rowPort?.id||'right',proxy:true};delete out.bus;delete out.manualRoute;delete out.waypoints;}
+   if(!shown.has(out.source)||!shown.has(out.target))continue;const key=out.proxy?[out.source,out.sourcePort,out.target,out.targetPort,out.arrow,out.arrowStart].join('|'):out.id;if(seen.has(key))continue;seen.add(key);edges.push(out);
+  }
+  d.edges=edges;d.hidden=hidden;d.rowCollapseState=state;return d;
+ }
+ function tableAxis(t,axis,index,remove=false){const out=previous.tableAxis(t,axis,index,remove);if(out.rowBehavior){const ids=new Set(out.rowIds);out.rowBehavior=Object.fromEntries(Object.entries(out.rowBehavior).filter(([id])=>ids.has(id)));}return out;}
+ function dragPlan(pg,selection,folds=new Set(),mode={}){
+  const selected=new Set(selection),plan=previous.dragPlan(pg,selection,folds,mode);
+  if(mode.collapsedRows?.size){const state=rowCollapseState(pg,mode.collapsedRows,folds);for(const [id,owner] of state.owner)if(selected.has(owner))plan.ids.add(id);}
+  // Absolute locks pin only those blocks. A pinned descendant must not lock its parent.
+  plan.stationary=[...plan.ids].filter(id=>!selected.has(id)&&pg.nodes.find(n=>n.id===id)?.locked);
+  for(const id of plan.stationary)plan.ids.delete(id);
+  for(const n of pg.nodes)if(n.anchorId&&plan.stationary.includes(n.anchorId))plan.ids.delete(n.id);
+  plan.locked=[...selected].filter(id=>pg.nodes.find(n=>n.id===id)?.locked);return plan;
+ }
+ function internalTarget(p,m){const pageId=m.target?.pageId||m.url?.split(',')[1],page=p.pages.find(pg=>pg.id===pageId);if(!page)return null;if(m.kind==='node'){const node=page.nodes.find(n=>n.id===m.target?.nodeId);return node?{page,node}:null;}return {page};}
+ function normalizeV6(p){previous.normalizeV6(p);for(const pg of p.pages)for(const e of pg.edges)if(e.arrowStart===undefined)e.arrowStart=false;for(const m of p.materials||[])if(m.kind==='page'||m.url?.startsWith('data:page/id,')){m.kind='page';m.target||={pageId:m.url?.split(',')[1]};if(!m.title||m.title.startsWith('data:page/'))m.title=internalTarget(p,m)?.page.title||'Внутренняя ссылка на удалённый лист';}return p;}
+ function bundleRoutes(d){const out=previous.bundleRoutes(d);for(const b of out.buses){const edges=d.edges.filter(e=>e.bus===b.id);b.arrowStart=b.mode==='out'&&edges.some(e=>e.arrowStart);if(b.mode==='out')for(const e of edges)out.routes.get(e.id).busOutgoing=true;
+   for(const segment of b.segments||[]){const terminal=b.terminals.find(t=>t.node===segment.node&&Math.abs(t.tip.x-(segment.points[0]?.x||0))+Math.abs(t.tip.y-(segment.points[0]?.y||0))<.01);segment.arrowStart=!!terminal&&edges.some(e=>e.source===terminal.node&&e.arrowStart&&C.samePort(d.nodes.find(n=>n.id===terminal.node),e.sourcePort,terminal.port,'right'));}
+  }return out;}
+ Object.assign(C,{rowKey,rowContinuations,rowCollapseState,display,tableAxis,dragPlan,normalizeV6,bundleRoutes,internalTarget});
+})(globalThis.Core);
