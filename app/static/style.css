@@ -255,3 +255,7 @@
 .node.comment{border-style:dashed;border-radius:8px}.node.comment .node-body{overflow:hidden}.selection-box.intersecting{background:#16a08512;border-color:#16a085;border-style:dashed}.bulk-field{margin-bottom:12px}.protection-badge{display:inline-flex;color:#6d7995}.protection-badge svg{width:16px;height:16px}
 
 .node.comment .node-label{overflow-wrap:normal;word-break:normal}
+
+/* 0.7.6: two start commands and readable recent paths. */
+.home-actions{grid-template-columns:repeat(2,minmax(0,1fr))}.recent-info .recent-path{white-space:normal;overflow:visible;max-width:none;overflow-wrap:anywhere;color:#526480}
+@media(max-width:760px){.home-actions{grid-template-columns:1fr}}

@@ -431,7 +431,7 @@ function layoutUnits(pg){
  if(outside.size)ordered.push({id:'outside',heads:[],members:outside,rank:Infinity,outside:true});
  return ordered;
 }
-/** Preserve x, resolve actual rectangle collisions, place later envelopes below earlier ones.
+/** Preserve x and resolve rectangle collisions. Only compaction packs branch envelopes.
  * Locked rectangles are immovable obstacles. Remaining lock/lock conflicts are reported.
  */
 function spaceBranches(pg,nodes,compact,options={}){
@@ -462,19 +462,25 @@ function spaceBranches(pg,nodes,compact,options={}){
   packForks(list);
   const anchors=list.filter(n=>!n.anchorId&&!annotation(n)),local=anchors.filter(n=>n.locked);
   const loose=anchors.filter(n=>!n.locked).sort((a,b)=>a.y-b.y||a.x-b.x||a.id.localeCompare(b.id));
-  for(const n of loose){if(options.autoSpace!==false){for(let pass=0;pass<=local.length;pass++){const hits=local.filter(q=>intersects(n,q,18));if(!hits.length)break;n.y=Math.max(...hits.map(q=>q.y+q.h))+24;}}local.push(n);}
+  for(const n of loose){if(options.autoSpace!==false){for(let pass=0;pass<=local.length;pass++){const hits=local.filter(q=>intersects(n,q,compact?18:0));if(!hits.length)break;n.y=Math.max(...hits.map(q=>q.y+q.h))+24;}}local.push(n);}
  }
  let cursor=null;
  for(const unit of units.filter(u=>!u.outside)){
   const list=[...unit.members].map(id=>shown.get(id)).filter(Boolean);if(!list.length)continue;resolve(list);
-  let bb=C.bounds(list.filter(n=>!n.anchorId&&!annotation(n)).length?list.filter(n=>!n.anchorId&&!annotation(n)):list);let shift=cursor===null?0:(compact?cursor-bb.y:Math.max(0,cursor-bb.y));
+  let bb=C.bounds(list.filter(n=>!n.anchorId&&!annotation(n)).length?list.filter(n=>!n.anchorId&&!annotation(n)):list);let shift=cursor===null||!compact?0:cursor-bb.y;
   if(options.autoSpace===false&&!compact)shift=0;
   if(list.some(n=>n.locked&&!annotation(n)))shift=0;
   if(shift)for(const n of list)if(!n.locked&&!n.anchorId)n.y+=shift;
   // Avoid fixed obstacles / previous envelopes with intersecting columns.
-  if(options.autoSpace!==false)for(let pass=0;pass<=placed.length;pass++){
-   let dy=0;for(const n of list)if(!n.locked&&!n.anchorId&&!annotation(n))for(const q of placed)if(q.id!==n.id&&intersects(n,q,18))dy=Math.max(dy,q.y+q.h+24-n.y);
-   if(dy<=0)break;for(const n of list)if(!n.locked&&!n.anchorId)n.y+=dy;shift+=dy;
+  if(options.autoSpace!==false){
+   if(!compact){
+    // Shared drawing bands are independent of movement ownership: only
+    // colliding blocks move in free placement, never their entire band.
+    for(const n of list)if(!n.locked&&!n.anchorId&&!annotation(n))for(let pass=0;pass<=placed.length;pass++){const hits=placed.filter(q=>q.id!==n.id&&intersects(n,q));if(!hits.length)break;n.y=Math.max(...hits.map(q=>q.y+q.h))+24;}
+   }else for(let pass=0;pass<=placed.length;pass++){
+    let dy=0;for(const n of list)if(!n.locked&&!n.anchorId&&!annotation(n))for(const q of placed)if(q.id!==n.id&&intersects(n,q,18))dy=Math.max(dy,q.y+q.h+24-n.y);
+    if(dy<=0)break;for(const n of list)if(!n.locked&&!n.anchorId)n.y+=dy;shift+=dy;
+   }
   }
   bb=C.bounds(list.filter(n=>!n.anchorId&&!annotation(n)).length?list.filter(n=>!n.anchorId&&!annotation(n)):list);cursor=cursor===null?bb.y+bb.h+gap:Math.max(cursor,bb.y+bb.h+gap);
   // Hidden contents move with their own envelope, not with an arbitrary sibling root.
@@ -485,8 +491,8 @@ function spaceBranches(pg,nodes,compact,options={}){
   for(const id of outside.members){const n=shown.get(id);if(!n||n.locked||n.anchorId||annotation(n))continue;
    // A fan-out parent follows the centre of its visible direct destinations in auto layout.
    const targets=(graph(pg).adj.get(id)||[]).map(k=>shown.get(k)).filter(Boolean);
-   if(targets.length>1&&targets.every(t=>t.x>n.x+n.w))n.y=(Math.min(...targets.map(t=>t.y+t.h/2))+Math.max(...targets.map(t=>t.y+t.h/2)))/2-n.h/2;
-   for(let i=0;i<=placed.length;i++){const hit=placed.filter(q=>q.id!==id&&intersects(n,q,18));if(!hit.length)break;n.y=Math.max(...hit.map(q=>q.y+q.h))+24;}placed.push(n);
+   if(compact&&targets.length>1&&targets.every(t=>t.x>n.x+n.w))n.y=(Math.min(...targets.map(t=>t.y+t.h/2))+Math.max(...targets.map(t=>t.y+t.h/2)))/2-n.h/2;
+   for(let i=0;i<=placed.length;i++){const hit=placed.filter(q=>q.id!==id&&intersects(n,q,compact?18:0));if(!hit.length)break;n.y=Math.max(...hit.map(q=>q.y+q.h))+24;}placed.push(n);
   }
  }
  for(const n of nodes){const r=raw.get(n.id);if(r&&!n.anchorId)offsets.set(n.id,{x:n.x-r.x,y:n.y-r.y});}
@@ -1109,10 +1115,30 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
   for(let i=0;i<branches.length;i++){const b=branches[i],point=end(b.n),delta=mid+(i-(branches.length-1)/2)*step-point[axis],cross=common-point[perp];for(const id of b.ids){const n=shown.get(id);if(!n||n.anchorId||n.locked||n.editLocked)continue;n[axis]+=delta;n[perp]+=cross;const o=d.layoutOffsets.get(id)||{x:0,y:0};d.layoutOffsets.set(id,{...o,[axis]:o[axis]+delta,[perp]:o[perp]+cross});}}
   (d.symmetryGroups||=[]).push({parent:hub,heads:heads.map(n=>n.id)});
  }
- function display(pg,folds=new Set(),compact=true,folded=new Set(),options={}){const protectedPg={...pg,nodes:pg.nodes.map(n=>n.editLocked?{...n,locked:true}:n),buses:(pg.buses||[]).map(b=>b.symmetry===undefined?b:{...b,autoAlign:b.mode!=='free'&&b.symmetry})};
+ // Symmetry follows actual connection ports, including table body/row anchors.
+ function combSymmetry(pg,d,b){
+  const shown=new Map(d.nodes.map(n=>[n.id,n])),edges=d.edges.filter(e=>e.bus===b.id&&!e.proxy&&shown.has(e.source)&&shown.has(e.target));if(edges.length<2)return;
+  const hub=b.mode!=='free'&&shown.get(b.hub),hubPoint=hub&&C.endpoint(hub,b.port,b.mode==='in'?'left':'right'),axis=hubPoint?(['left','right'].includes(hubPoint.side)?'y':'x'):(b.orientation==='horizontal'?'x':'y'),perp=axis==='y'?'x':'y',size=axis==='y'?'h':'w';
+  const terminals=role=>{const out=new Map();for(const e of edges){const n=shown.get(e[role]),port=e[role+'Port'],point=C.endpoint(n,port,role==='source'?'right':'left'),old=out.get(n.id);if(old&&Math.abs(old.point[axis]-point[axis])>.01)return null;out.set(n.id,{n,port,point,role});}return [...out.values()].sort((a,b)=>a.point[axis]-b.point[axis]||a.n.id.localeCompare(b.n.id));};
+  const sources=terminals('source'),targets=terminals('target');if(!sources||!targets)return;
+  const groups=hub?[b.mode==='in'?sources:targets]:[sources,targets],all=groups.flat(),heads=new Set(all.map(t=>t.n.id));if(all.some(t=>t.n.locked||t.n.editLocked)||all.length!==heads.size)return;
+  // Stop at other comb terminals. Shared downstream nodes retain their position.
+  const g=C.graph({...pg,edges:pg.edges.filter(e=>e.bus!==b.id)}),branches=all.map(t=>{const ids=new Set([t.n.id]),queue=[t.n.id];for(let i=0;i<queue.length;i++)for(const id of g.adj.get(queue[i])||[])if(id!==hub?.id&&!heads.has(id)&&!ids.has(id)){ids.add(id);queue.push(id);}return {...t,ids};}),counts=new Map();for(const t of branches)for(const id of t.ids)counts.set(id,(counts.get(id)||0)+1);
+  for(const t of branches)t.ids=new Set([...t.ids].filter(id=>counts.get(id)===1));
+  if(branches.some(t=>[...t.ids].some(id=>{const n=shown.get(id);return n&&!annotation(n)&&(n.locked||n.editLocked)})))return;
+  const mid=hubPoint?hubPoint[axis]:(sources[0].point[axis]+sources.at(-1).point[axis])/2,gap=Math.max(16,Number(b.alignGap)||64);
+  for(const group of groups){let step=group.length>1?(group.at(-1).point[axis]-group[0].point[axis])/(group.length-1):0;
+   for(let i=1;i<group.length;i++){const a=group[i-1],c=group[i];step=Math.max(step,a.n[axis]+a.n[size]-a.point[axis]+c.point[axis]-c.n[axis]+gap);}
+   const common=group.reduce((s,t)=>s+t.point[perp],0)/group.length,alignCross=group.every(t=>t.point.side===group[0].point.side);
+   group.forEach((t,i)=>{const delta=mid+(i-(group.length-1)/2)*step-t.point[axis],cross=alignCross?common-t.point[perp]:0,branch=branches.find(q=>q.n.id===t.n.id);for(const id of branch.ids){const n=shown.get(id);if(!n||n.anchorId||n.locked||n.editLocked)continue;n[axis]+=delta;n[perp]+=cross;const o=d.layoutOffsets.get(id)||{x:0,y:0};d.layoutOffsets.set(id,{...o,[axis]:o[axis]+delta,[perp]:o[perp]+cross});}});
+  }
+  (d.symmetryGroups||=[]).push({bus:b.id,parent:hub?.id,heads:[...heads]});
+  for(const n of d.nodes)if(n.anchorId){const host=shown.get(n.anchorId);if(host){n.x=host.x+(n.anchorX||0);n.y=host.y+(n.anchorY||0);}}
+ }
+ function display(pg,folds=new Set(),compact=true,folded=new Set(),options={}){const protectedPg={...pg,nodes:pg.nodes.map(n=>n.editLocked?{...n,locked:true}:n),buses:(pg.buses||[]).map(b=>({...b,autoAlign:false,symmetry:false}))};
   const d=prev.display(protectedPg,folds,compact,folded,options),hadOffsets=!!d.layoutOffsets;d.layoutOffsets||=new Map();
   for(const n of pg.nodes)if(n.type==='decision'&&n.branchSymmetry){const edges=d.edges.filter(e=>e.source===n.id&&!e.proxy&&!e.bus&&!edgeRelationship(pg,e)?.annotation);const sides=edges.map(e=>C.port(n,e.sourcePort).side),axis=sides.includes('left')&&sides.includes('right')?'x':'y';alignTargets(pg,d,n.id,edges,axis,Math.max(16,Number(n.branchGap)||64));}
-  for(const b of pg.buses||[])if(b.mode==='free'&&b.symmetry){const edges=d.edges.filter(e=>e.bus===b.id&&!e.proxy),axis=b.orientation==='horizontal'?'x':'y',size=axis==='y'?'h':'w',shown=new Map(d.nodes.map(n=>[n.id,n]));const sources=[...new Set(edges.map(e=>e.source))].map(id=>shown.get(id)).filter(Boolean),targets=[...new Set(edges.map(e=>e.target))].map(id=>shown.get(id)).filter(Boolean),groups=[sources,targets];if(groups.flat().some(n=>n.locked||n.editLocked))continue;const mid=groups.flat().reduce((s,n)=>s+n[axis]+n[size]/2,0)/Math.max(1,groups.flat().length),gap=Math.max(16,b.alignGap||64);for(const group of groups){group.sort((a,b)=>a[axis]-b[axis]);const span=group.reduce((s,n)=>s+n[size],0)+gap*(group.length-1);let cursor=mid-span/2;for(const n of group){const delta=cursor-n[axis];n[axis]+=delta;const o=d.layoutOffsets.get(n.id)||{x:0,y:0};d.layoutOffsets.set(n.id,{...o,[axis]:o[axis]+delta});cursor+=n[size]+gap;}}}
+  for(const b of pg.buses||[])if(b.symmetry||b.symmetry===undefined&&b.autoAlign)combSymmetry(pg,d,b);
   // An annotation follows any layout movement of its host; it cannot push its host away.
   const shown=new Map(d.nodes.map(n=>[n.id,n])),raw=new Map(pg.nodes.map(n=>[n.id,n])),owners=new Map();for(const e of pg.edges){const r=edgeRelationship(pg,e);if(r?.annotation&&!owners.has(r.child))owners.set(r.child,r.parent);}
   for(const [child,parent] of owners){const n=shown.get(child),host=shown.get(parent),o=raw.get(child),h=raw.get(parent);if(!n||!host||!o||!h||n.locked||n.editLocked)continue;n.x=o.x+(o.offsetX||0)+host.x-h.x-(h.offsetX||0);n.y=o.y+(o.offsetY||0)+host.y-h.y-(h.offsetY||0);d.layoutOffsets.set(child,{x:n.x-o.x-(o.offsetX||0),y:n.y-o.y-(o.offsetY||0)});}
@@ -1125,7 +1151,7 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
   for(const drawing of pg.drawings||[]){const host=drawing.anchor&&ns.get(drawing.anchor);if(drawing.anchor&&!host)continue;const points=(drawing.points||[]).map(p=>({x:p.x+(host?.x||0),y:p.y+(host?.y||0)}));if(['rect','ellipse'].includes(drawing.type)&&points.length>1){const a=points[0],b=points.at(-1);if(box({x:Math.min(a.x,b.x),y:Math.min(a.y,b.y),w:Math.abs(a.x-b.x),h:Math.abs(a.y-b.y)}))drawings.add(drawing.id);}else if(path(points))drawings.add(drawing.id);}return {nodes,edges,drawings,buses};
  }
  function bulkPatch(pg,selection,patch,category='all'){const out=C.clone(pg);for(const [list,kind] of [['nodes','node'],['edges','edge'],['buses','bus'],['drawings','drawing']])for(const item of out[list]||[]){if(!(selection[kind]||[]).includes(item.id)||(category!=='all'&&category!==(kind==='node'?item.type:kind)))continue;if(item.editLocked&&!Object.hasOwn(patch,'editLocked'))continue;for(const [key,value] of Object.entries(patch)){const allowed={node:['editLocked','color','fill','fontSize','relativeLock','collapsible','locked','autoSize','tableAutoSize','tableWordWrap','branchSymmetry','branchGap'],edge:['editLocked','color','arrow','arrowStart','dashed','parentRole','style','labelCentered'],bus:['editLocked','color','symmetry','alignGap','style'],drawing:['editLocked','color','width']};if(!allowed[kind].includes(key)||(key.startsWith('branch')&&item.type!=='decision')||(key.startsWith('table')&&!item.table))continue;if(key==='color'){item[kind==='drawing'?'color':kind==='node'?'stroke':'stroke']=value;}else if(key==='tableAutoSize'&&item.table)C.setTableAutoSize(item,value);else if(key==='tableWordWrap'&&item.table)item.table.wordWrap=value;else if(key==='symmetry'&&kind==='bus'){item.symmetry=value;item.autoAlign=value;}else if(key==='autoSize'&&kind==='node'){if(value){item.autoBaseW=item.w;item.autoBaseH=item.h;}item.autoSize=value;}else item[key]=value;}}return out;}
- Object.assign(C,{edgeRelationship,relativeDescendantsGraph,normalizeV6,display,dragPlan,rectangleHits,bulkPatch});
+ Object.assign(C,{edgeRelationship,relativeDescendantsGraph,normalizeV6,display,dragPlan,rectangleHits,bulkPatch,combSymmetry});
 })(globalThis.Core);
 
 /* Deletion keeps protected objects and their required endpoints intact. */
