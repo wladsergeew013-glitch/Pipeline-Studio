@@ -1,9 +1,9 @@
 {
   "version": "0.7.6",
   "schemaVersion": 6,
-  "publicRelease": false,
+  "publicRelease": true,
   "report": "docs/VALIDATION.md",
-  "status": "local-candidate",
+  "status": "public-release",
   "sourceChecks": {
     "model": 129,
     "browser": 151,
