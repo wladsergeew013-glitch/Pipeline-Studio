@@ -1,0 +1,51 @@
+{
+  "name": "pipeline-studio-desktop",
+  "version": "0.7.16",
+  "description": "Pipeline Studio desktop editor",
+  "author": "Pipeline Studio",
+  "license": "UNLICENSED",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.pipelinestudio.desktop",
+    "productName": "Pipeline Studio",
+    "asar": true,
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "file-bridge.cjs",
+      "ui/Pipeline-Studio.html",
+      "icon.ico"
+    ],
+    "extraResources": [
+      {
+        "from": "../THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      },
+      {
+        "from": "../licenses",
+        "to": "licenses"
+      }
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "portable",
+      "icon": "icon.ico",
+      "signExecutable": false
+    },
+    "portable": {
+      "artifactName": "Pipeline-Studio-${version}-x64.exe",
+      "unpackDirName": true
+    }
+  },
+  "private": true
+}

@@ -1,6 +1,8 @@
 # Assets and dependencies
 
-The runnable application uses browser APIs and Python's standard library. No third-party JavaScript runtime packages or fonts are distributed.
+The standalone HTML uses browser APIs. The optional Python server uses Python's standard library. No font binaries are distributed.
+
+The Windows desktop EXE bundles Electron 44.5.1, including Chromium and Node.js. Electron's license is included as `LICENSE.electron.txt` and Chromium's third-party notices as `LICENSES.chromium.html` beside the extracted application. These runtime files are packaged inside the portable EXE. The editor uses an isolated preload and does not expose Node.js to diagram pages. electron-builder 26.15.3 is a build dependency; versions are pinned in `desktop/package-lock.json`.
 
 The included PNG emoji illustrations were rasterized from the system-installed **Noto Color Emoji** font (Google / Noto contributors). Font binaries are not included. Additional emoji entered by a user can be rasterized locally by that user's browser. Glyph appearance depends on the glyphs available on that system.
 

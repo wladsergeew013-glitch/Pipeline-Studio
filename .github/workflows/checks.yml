@@ -14,3 +14,28 @@ jobs:
       - run: npm install --no-save --package-lock=false playwright
       - run: npx playwright install --with-deps chromium
       - run: python tests/run_checks.py --browser
+  desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: python -m pip install Pillow
+      - run: npm install --no-save --package-lock=false playwright
+      - run: npm ci --prefix desktop
+      - run: python build_portable.py
+      - run: python desktop/prepare.py
+      - run: npm run build --prefix desktop
+      - run: node tests/test_desktop_files.js
+      - run: node tests/browser_desktop.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pipeline-Studio-Windows-x64
+          path: desktop/dist/Pipeline-Studio-*-x64.exe
+          if-no-files-found: error

@@ -292,7 +292,8 @@
         "symmetryGap": 64,
         "autoSpace": false
       },
-      "collapseMode": "nodes"
+      "collapseMode": "nodes",
+      "symmetrySets": []
     }
   ]
 }

@@ -46,3 +46,9 @@ Thumbs.db
 /*.inc
 
 /update_v*.py
+/desktop/dist/
+/desktop/ui/
+/Pipeline Studio.exe
+/Pipeline Studio*.exe
+/documents/~$*
+/docs/PLAN-2026-10-04.md

@@ -188,4 +188,20 @@ class ServerTests(unittest.TestCase):
         relation=next(e for e in out['edges'] if e['id']=='v075-relation')
         self.assertEqual(relation['parentRole'],'target');self.assertTrue(relation['editLocked']);self.assertTrue(relation['arrowStart'])
 
+    def test_24_cell_styles_and_connection_symmetry_roundtrip(self):
+        p=self.project();pg=p['pages'][0]
+        source=dict(pg['nodes'][0],id='styles-table',type='table',editLocked=False,title='Styles')
+        source['table']={'cells':[[{'text':'Styled','fill':'#dae8fc','color':'#17365d','stroke':'#6c8ebf','italic':True,'fontSize':16}]],'widths':[180],'heights':[40],'autoSize':False}
+        pg['nodes'].append(source)
+        for i in range(4):
+            target=dict(pg['nodes'][0],id=f'symmetry-terminal-{i}',type='block',editLocked=False,x=600,y=i*160)
+            target.pop('table',None);pg['nodes'].append(target)
+            pg['edges'].append({'id':f'symmetry-link-{i}','source':source['id'],'target':target['id'],'sourcePort':'right','targetPort':'left','arrow':True})
+        pg['symmetrySets']=[{'id':'four-branches','edges':[f'symmetry-link-{i}' for i in range(4)],'axis':'y','gap':64,'enabled':True}]
+        status,result,_=self.editor.call('/api/project','PUT',p);self.assertEqual(status,200,result)
+        out=self.project()['pages'][0]
+        self.assertEqual(out['symmetrySets'],pg['symmetrySets'])
+        cell=next(n for n in out['nodes'] if n['id']==source['id'])['table']['cells'][0][0]
+        self.assertEqual(cell['color'],'#17365d');self.assertTrue(cell['italic']);self.assertEqual(cell['fontSize'],16)
+
 if __name__=='__main__':unittest.main(verbosity=2)

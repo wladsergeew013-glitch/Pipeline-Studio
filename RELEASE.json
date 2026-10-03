@@ -1,18 +1,31 @@
 {
-  "version": "0.7.6",
+  "version": "0.7.16",
   "schemaVersion": 6,
   "publicRelease": true,
-  "report": "docs/VALIDATION.md",
-  "status": "public-release",
+  "report": "docs/HTML-EXPLORER-NOTES-2026-10-04.md",
+  "status": "validated",
   "sourceChecks": {
-    "model": 129,
-    "browser": 151,
-    "http": 24,
-    "optionalSkipped": 1
+    "model": 172,
+    "browser": 304,
+    "http": 50,
+    "materials": 77,
+    "optionalSkipped": 1,
+    "desktopFiles": 27,
+    "desktopUI": 23
   },
-  "releaseDate": "2026-10-02",
+  "releaseDate": "2026-10-04",
   "repository": "https://github.com/wladsergeew013-glitch/Pipeline-Studio",
-  "fullLocalChecksPassed": 317,
+  "fullLocalChecksPassed": 661,
   "fullLocalChecksSkipped": 1,
-  "workingDocumentChecks": 13
+  "workingDocumentChecks": 8,
+  "validationDate": "2026-10-04",
+  "deliveryDocumentChecks": 4,
+  "desktopFileChecks": 27,
+  "desktopUI": 23,
+  "portableEXEValidated": true,
+  "portableSingleAndColdLaunchValidated": true,
+  "nativeOfficeOriginalObserved": [
+    "DOCX"
+  ],
+  "localhostRequired": false
 }
