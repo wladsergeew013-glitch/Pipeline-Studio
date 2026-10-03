@@ -1,6 +1,7 @@
 'use strict';
 const fs=require('fs'),path=require('path'),assert=require('assert/strict'),crypto=require('crypto'),{FileBridge}=require('../desktop/file-bridge.cjs');
-const B=path.resolve(__dirname,'..'),base=fs.mkdtempSync(path.join(B,'qa/desktop-unit-')),root=path.join(base,'project'),outside=path.join(base,'outside');fs.mkdirSync(root);fs.mkdirSync(outside);
+const B=path.resolve(__dirname,'..');fs.mkdirSync(path.join(B,'qa'),{recursive:true});
+const base=fs.mkdtempSync(path.join(B,'qa/desktop-unit-')),root=path.join(base,'project'),outside=path.join(base,'outside');fs.mkdirSync(root);fs.mkdirSync(outside);
 const checks=[],ok=(name,value)=>{assert(value,name);checks.push(name);console.log('PASS',name)},reject=async fn=>{try{await fn();return false}catch{return true}};
 (async()=>{try{
  const original=path.join(root,'Оригинал.docx');fs.writeFileSync(original,'original bytes');let chosen=original;const opens=[],state=path.join(base,'private.json'),config={root,state,picker:async()=>chosen,opener:async(p,folder)=>opens.push({p,folder})},bridge=new FileBridge(config);
