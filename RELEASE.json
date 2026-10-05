@@ -1,31 +1,25 @@
 {
-  "version": "0.7.16",
+  "version": "0.7.17",
+  "baseVersion": "0.7.16",
   "schemaVersion": 6,
-  "publicRelease": true,
-  "report": "docs/HTML-EXPLORER-NOTES-2026-10-04.md",
-  "status": "validated",
+  "publicRelease": false,
+  "status": "local-fix-validated",
+  "report": "docs/PORTABLE-TRANSFER-2026-10-05.md",
+  "validationDate": "2026-10-05",
   "sourceChecks": {
     "model": 172,
-    "browser": 304,
     "http": 50,
-    "materials": 77,
-    "optionalSkipped": 1,
     "desktopFiles": 27,
-    "desktopUI": 23
+    "editorOrigin": 19,
+    "desktopUI": 23,
+    "portableTransfer": 3
   },
-  "releaseDate": "2026-10-04",
-  "repository": "https://github.com/wladsergeew013-glitch/Pipeline-Studio",
-  "fullLocalChecksPassed": 661,
-  "fullLocalChecksSkipped": 1,
-  "workingDocumentChecks": 8,
-  "validationDate": "2026-10-04",
-  "deliveryDocumentChecks": 4,
-  "desktopFileChecks": 27,
-  "desktopUI": 23,
-  "portableEXEValidated": true,
-  "portableSingleAndColdLaunchValidated": true,
-  "nativeOfficeOriginalObserved": [
-    "DOCX"
+  "fullLocalChecksPassed": 294,
+  "skippedReasons": [
+    "Private working document is not included",
+    "LibreOffice is not installed"
   ],
-  "localhostRequired": false
+  "portableEXEValidated": true,
+  "copiedPortableOpenAndSaveValidated": true,
+  "repository": "https://github.com/wladsergeew013-glitch/Pipeline-Studio"
 }

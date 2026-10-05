@@ -10,6 +10,7 @@ subprocess.run(['node',str(B/'tests/test_working_document.js')],cwd=B,check=True
 subprocess.run([sys.executable,str(B/'tests/test_server.py')],cwd=B,check=True)
 subprocess.run([sys.executable,str(B/'tests/test_local.py')],cwd=B,check=True)
 subprocess.run(['node',str(B/'tests/test_desktop_files.js')],cwd=B,check=True)
+subprocess.run(['node',str(B/'tests/test_editor_origin.js')],cwd=B,check=True)
 if '--browser' in sys.argv:
     subprocess.run(['node',str(B/'tests/browser_legacy_notes.js')],cwd=B,check=True)
     subprocess.run(['node',str(B/'tests/browser_v072.js')],cwd=B,check=True)
@@ -28,4 +29,5 @@ if '--materials' in sys.argv:
     subprocess.run(['node',str(B/'tests/browser_local_materials.js')],cwd=B,check=True)
 if '--desktop' in sys.argv:
     subprocess.run(['node',str(B/'tests/browser_desktop.js')],cwd=B,check=True)
+    subprocess.run(['node',str(B/'tests/browser_portable_transfer.js')],cwd=B,check=True)
 print('All requested checks passed.')

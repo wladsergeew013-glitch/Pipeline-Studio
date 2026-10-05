@@ -1745,7 +1745,7 @@ Core.deleteSelection=function(pg,selection){
  const labelPlacement=(edge,route)=>{const p=prev.labelPlacement(edge,route);return {...p,x:p.x+(edge.labelOffsetX||0),y:p.y+(edge.labelOffsetY||0)};};
  Object.assign(C,{display,dragPlan,prepareMove,moveNodes,setEdgeSymmetry,releaseSymmetry,coupledRoots,expandedFolds,normalizeV6,convertNode,bulkPatch,labelPlacement});
 })(Core);
-</script><script id="app-source">/* Pipeline Studio 0.7.16 — browser editor and publication viewer.
+</script><script id="app-source">/* Pipeline Studio 0.7.17 — browser editor and publication viewer.
    No external scripts, fonts, analytics or cloud viewers are loaded.
    Persistence is either the local Python server, or IndexedDB in portable mode. */
 'use strict';
@@ -2242,7 +2242,7 @@ function legacyBulkRelink(){
 
 /* 0.3: The editor is an application. A document and its referenced files are separate.
    All filesystem access is explicitly granted by the user; imported HTML is parsed, never run. */
-const RELEASE='0.7.16';
+const RELEASE='0.7.17';
 function desktopAvailable(){return typeof window.STUDIO_DESKTOP?.call==='function';}
 function nativeAvailable(){return desktopAvailable()||!!window.STUDIO_NATIVE?.token&&location.hostname==='127.0.0.1';}
 async function nativeCall(route,data={}){if(desktopAvailable())return window.STUDIO_DESKTOP.call(route,data);if(!nativeAvailable())throw Error('Открытие оригинала доступно в Pipeline Studio.exe');const response=await fetch('/native/'+route,{method:'POST',headers:{'Content-Type':'application/json','X-Studio-Token':window.STUDIO_NATIVE.token},body:JSON.stringify(data),cache:'no-store'});const result=await response.json();if(!response.ok)throw Error(result.error||'Не удалось обратиться к исходному файлу');return result;}

@@ -33,7 +33,9 @@ jobs:
       - run: python desktop/prepare.py
       - run: npm run build --prefix desktop
       - run: node tests/test_desktop_files.js
+      - run: node tests/test_editor_origin.js
       - run: node tests/browser_desktop.js
+      - run: node tests/browser_portable_transfer.js
       - uses: actions/upload-artifact@v4
         with:
           name: Pipeline-Studio-Windows-x64

@@ -1,6 +1,6 @@
 {
   "name": "pipeline-studio-desktop",
-  "version": "0.7.16",
+  "version": "0.7.17",
   "description": "Pipeline Studio desktop editor",
   "author": "Pipeline Studio",
   "license": "UNLICENSED",
@@ -21,6 +21,7 @@
       "main.cjs",
       "preload.cjs",
       "file-bridge.cjs",
+      "editor-origin.cjs",
       "ui/Pipeline-Studio.html",
       "icon.ico"
     ],
