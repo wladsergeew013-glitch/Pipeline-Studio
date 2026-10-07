@@ -994,9 +994,9 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
   return ps.slice(1).every((b,i)=>{const a=ps[i];return (Math.abs(a.x-b.x)<.001||Math.abs(a.y-b.y)<.001)&&![ns.get(e.source),ns.get(e.target)].some(n=>crosses(a,b,n));});
  }
  function storedPath(e,points){const out={...e,manualRouteMode:'polyline',manualRoute:points.slice(1,-1).map(p=>({dx:p.x-points[0].x,dy:p.y-points[0].y}))};delete out.waypoints;if(!out.manualRoute.length){delete out.manualRoute;delete out.manualRouteMode;}return out;}
- function removeVisibleSegment(e,ns,index){
+ function removeVisibleSegment(e,ns,index,visibleRoute){
   if(e.bus)throw Error('Сначала выведите ветвь из гребёнки');
-  const ps=C.simplifyRoute(C.edgePath(e,ns).points);
+  const ps=C.simplifyRoute((visibleRoute||C.edgePath(e,ns)).points);
   if(index<=0||index>=ps.length-2)throw Error('Конечный сегмент закреплён за портом. Удалите внутренний изгиб или выровняйте порты блоков.');
   const key=Math.abs(ps[index].x-ps[index+1].x)<.001?'x':'y',candidates=[];
   // Collapse onto one adjacent parallel segment. All distant corners stay put.
@@ -1011,7 +1011,7 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
   if(!candidates.length)throw Error('Этот изгиб нужен для подключения к портам. Его удаление разорвёт связь; выровняйте порты блоков.');
   return candidates[0].out;
  }
- function moveVisibleSegment(e,ns,index,delta){const ps=C.simplifyRoute(C.edgePath(e,ns).points);if(index<=0||index>=ps.length-2)return e;const key=Math.abs(ps[index].x-ps[index+1].x)<.001?'x':'y';ps[index][key]+=delta;ps[index+1][key]+=delta;return validPath(ps,e,ns)?storedPath(e,ps):e;}
+ function moveVisibleSegment(e,ns,index,delta,visibleRoute){const ps=C.simplifyRoute((visibleRoute||C.edgePath(e,ns)).points);if(index<=0||index>=ps.length-2)return e;const key=Math.abs(ps[index].x-ps[index+1].x)<.001?'x':'y';ps[index][key]+=delta;ps[index+1][key]+=delta;return validPath(ps,e,ns)?storedPath(e,ps):e;}
  function connectionAxis(a,b){if(a.side==='left'&&b.side==='right'&&a.x>b.x||a.side==='right'&&b.side==='left'&&a.x<b.x)return 'y';if(a.side==='top'&&b.side==='bottom'&&a.y>b.y||a.side==='bottom'&&b.side==='top'&&a.y<b.y)return 'x';return null;}
  function snapConnectedMove(nodes,edges,ids,anchorId,dx,dy,zoom=1,mode={},axis=null){
   const out=previous.snapMove(nodes,ids,anchorId,dx,dy,zoom,mode,axis);out.straightEdges=[];if(!mode.connections)return out;
@@ -1171,6 +1171,84 @@ Core.deleteSelection=function(pg,selection){
  C.arrange=(pg,ids,mode)=>arrange(pg,ids.filter(id=>!pg.nodes.find(n=>n.id===id)?.editLocked),mode);
  C.autoLayout=(pg,group)=>{const model={...pg,edges:pg.edges.map(e=>{const r=C.edgeRelationship(pg,e);return r?{...e,source:r.parent,target:r.child}:null}).filter(Boolean)},out=autoLayout(model,group);out.edges=C.clone(pg.edges);for(let i=0;i<out.nodes.length;i++)if(pg.nodes[i].editLocked)out.nodes[i]=C.clone(pg.nodes[i]);return out;};
 })(Core);
+/* Routes belonging to a non-crossing symmetry constraint share a routing
+   context. Independent row links must not silently become one overlapping
+   spine, and a long connector must avoid every visible workflow block. */
+(function(C){
+ const previous=C.bundleRoutes,vectors={left:{x:-1,y:0},right:{x:1,y:0},top:{x:0,y:-1},bottom:{x:0,y:1}},eps=.01;
+ const same=(a,b)=>Math.abs(a.x-b.x)<eps&&Math.abs(a.y-b.y)<eps;
+ function commonJunction(a,b,p){const on=(u,v)=>Math.abs((p.x-u.x)*(v.y-u.y)-(p.y-u.y)*(v.x-u.x))<eps&&p.x>=Math.min(u.x,v.x)-eps&&p.x<=Math.max(u.x,v.x)+eps&&p.y>=Math.min(u.y,v.y)-eps&&p.y<=Math.max(u.y,v.y)+eps;return a.length>1&&b.length>1&&(same(a[0],b[0])&&on(a[0],a[1])&&on(b[0],b[1])||same(a.at(-1),b.at(-1))&&on(a.at(-1),a.at(-2))&&on(b.at(-1),b.at(-2)));}
+ function segmentBox(a,b,n){return Math.abs(a.x-b.x)<eps?a.x>n.x+eps&&a.x<n.x+n.w-eps&&Math.max(a.y,b.y)>n.y+eps&&Math.min(a.y,b.y)<n.y+n.h-eps:a.y>n.y+eps&&a.y<n.y+n.h-eps&&Math.max(a.x,b.x)>n.x+eps&&Math.min(a.x,b.x)<n.x+n.w-eps;}
+ function intersection(a,b,c,d){const av=Math.abs(a.x-b.x)<eps,cv=Math.abs(c.x-d.x)<eps;if(av===cv){const k=av?'y':'x',v=av?'x':'y';if(Math.abs(a[v]-c[v])>eps)return null;const lo=Math.max(Math.min(a[k],b[k]),Math.min(c[k],d[k])),hi=Math.min(Math.max(a[k],b[k]),Math.max(c[k],d[k]));return hi<lo-eps?null:{[v]:a[v],[k]:(lo+hi)/2,overlap:hi-lo>eps};}if(!av)return intersection(c,d,a,b);const p={x:a.x,y:c.y};return p.y>=Math.min(a.y,b.y)-eps&&p.y<=Math.max(a.y,b.y)+eps&&p.x>=Math.min(c.x,d.x)-eps&&p.x<=Math.max(c.x,d.x)+eps?p:null;}
+ function avoidRoute(e,ns,peers,lane,strict=false,candidate){
+  const a=ns.get(e.source),b=ns.get(e.target),s=C.endpoint(a,e.sourcePort,'right'),t=C.endpoint(b,e.targetPort,'left'),sv=vectors[s.side],tv=vectors[t.side];if(!sv||!tv)return null;
+  const obstacles=[...ns.values()].filter(n=>n.type!=='summary'&&n.anchorId!==a.id&&n.anchorId!==b.id),stub=(pt,vector,own)=>{let length=24;for(const n of obstacles){if(n.id===own)continue;const along=vector.x?'x':'y',across=vector.x?'y':'x',size=vector.x?'w':'h',other=vector.x?'h':'w',direction=vector[along];if(pt[across]>n[across]-.01&&pt[across]<n[across]+n[other]+.01){const distance=direction>0?n[along]-pt[along]:pt[along]-n[along]-n[size];if(distance>=0)length=Math.min(length,Math.max(.25,distance/2));}}return {x:pt.x+vector.x*length,y:pt.y+vector.y*length};},p=stub(s,sv,a.id),q=stub(t,tv,b.id);
+  const blocked=(u,v,points)=>obstacles.some(n=>segmentBox(u,v,n))||peers.some(peer=>peer.points.slice(1).some((d,i)=>{const c=peer.points[i],hit=intersection(u,v,c,d);if(!hit)return false;if(points&&commonJunction(points,peer.points,hit))return false;
+   const common=[s,t].filter(pt=>same(pt,peer.points[0])||same(pt,peer.points.at(-1)));if(!hit.overlap&&common.some(pt=>same(pt,hit)))return false;
+   // The short shared-port lead is an intentional junction, not a crossing.
+   if(common.some(pt=>same(pt,s))&&i===0&&same(c,s)&&same(u,s)&&Math.abs((v.x-s.x)*sv.y-(v.y-s.y)*sv.x)<eps)return false;
+   if(common.some(pt=>same(pt,t))&&i===peer.points.length-2&&same(d,t)&&same(v,t)&&Math.abs((u.x-t.x)*tv.y-(u.y-t.y)*tv.x)<eps)return false;
+   return true;}));
+  const valid=points=>points.length>1&&(points[1].x-s.x)*sv.x+(points[1].y-s.y)*sv.y>eps&&(points.at(-2).x-t.x)*tv.x+(points.at(-2).y-t.y)*tv.y>eps&&points.slice(1).every((v,i)=>!blocked(points[i],v,points));
+  const paths=[],add=points=>{const ps=C.simplifyRoute(points);if(valid(ps))paths.push({points:ps,score:ps.slice(1).reduce((v,n,i)=>v+Math.abs(n.x-ps[i].x)+Math.abs(n.y-ps[i].y),0)+(ps.length-2)*18});};
+  if(candidate){add(candidate);return paths.length?C.pathData(paths[0].points):null;}
+  if(strict){const cross=['left','right'].includes(s.side)?'x':'y',span=t[cross]-s[cross],direction=Math.sign(span);if(!Number.isFinite(lane)||!direction||(lane-s[cross])*direction<18-eps||(t[cross]-lane)*direction<18-eps)return null;}
+  if(Number.isFinite(lane)){const vertical=['left','right'].includes(s.side);add([s,p,vertical?{x:lane,y:p.y}:{x:p.x,y:lane},vertical?{x:lane,y:q.y}:{x:q.x,y:lane},q,t]);}
+  // Prefer the assigned lanes when possible, so panning and zooming do not
+  // change topology. Only detour when an obstacle makes that lane invalid.
+  if(paths.length)return C.pathData(paths[0].points);
+  if(strict)return null;
+  const old=C.edgePath(e,ns);if(old)add(old.points);
+  const local=obstacles.filter(n=>n.x<Math.max(p.x,q.x)+64&&n.x+n.w>Math.min(p.x,q.x)-64&&n.y<Math.max(p.y,q.y)+64&&n.y+n.h>Math.min(p.y,q.y)-64),xs=[p.x,q.x,...local.flatMap(n=>[n.x-16,n.x+n.w+16])],ys=[p.y,q.y,...local.flatMap(n=>[n.y-16,n.y+n.h+16])];
+  for(const x of xs)add([s,p,{x,y:p.y},{x,y:q.y},q,t]);for(const y of ys)add([s,p,{x:p.x,y},{x:q.x,y},q,t]);
+  if(paths.length){paths.sort((a,b)=>a.score-b.score);return C.pathData(paths[0].points);}
+  // Visibility grid for blocked corridors. Each search state retains direction
+  // so adding a bend has a cost and the shortest route remains readable.
+  for(const peer of peers)for(const pt of peer.points){xs.push(pt.x-12,pt.x+12);ys.push(pt.y-12,pt.y+12);}
+  xs.push(Math.min(...xs)-64,Math.max(...xs)+64);ys.push(Math.min(...ys)-64,Math.max(...ys)+64);
+  const xx=[...new Set(xs)].sort((a,b)=>a-b),yy=[...new Set(ys)].sort((a,b)=>a-b),width=xx.length,start=yy.indexOf(p.y)*width+xx.indexOf(p.x),end=yy.indexOf(q.y)*width+xx.indexOf(q.x),point=k=>({x:xx[k%width],y:yy[Math.floor(k/width)]}),distance=new Map(),from=new Map(),heap=[];
+  const push=item=>{heap.push(item);let i=heap.length-1;while(i){const j=(i-1)>>1;if(heap[j].cost<=item.cost)break;heap[i]=heap[j];i=j;}heap[i]=item;},pop=()=>{const top=heap[0],last=heap.pop();if(heap.length){let i=0;while(i*2+1<heap.length){let j=i*2+1;if(j+1<heap.length&&heap[j+1].cost<heap[j].cost)j++;if(heap[j].cost>=last.cost)break;heap[i]=heap[j];i=j;}heap[i]=last;}return top;};
+  if(blocked(s,p)||blocked(q,t))return null;const firstDir=sv.x?0:1;distance.set(start*2+firstDir,0);push({state:start*2+firstDir,cost:0});let finish=null;
+  while(heap.length){const {state,cost}=pop();if(cost!==distance.get(state))continue;const k=Math.floor(state/2),dir=state%2,u=point(k);if(k===end){finish=state;break;}
+   for(const [next,nd] of [[k%width?k-1:-1,0],[k%width<width-1?k+1:-1,0],[k>=width?k-width:-1,1],[k<(yy.length-1)*width?k+width:-1,1]]){if(next<0)continue;const v=point(next);if(blocked(u,v))continue;const nextState=next*2+nd,total=cost+Math.abs(v.x-u.x)+Math.abs(v.y-u.y)+(dir===nd?0:18);if(total<(distance.get(nextState)??Infinity)){distance.set(nextState,total);from.set(nextState,state);push({state:nextState,cost:total});}}
+  }
+  if(finish===null)return null;const middle=[];for(let state=finish;state!==undefined;state=from.get(state))middle.push(point(Math.floor(state/2)));const points=C.simplifyRoute([s,...middle.reverse(),t]);return valid(points)?C.pathData(points):null;
+ }
+ // Both partners choose a lane or a matching detour together. Independent
+ // fallback routing can silently break a symmetry constraint in a narrow gap.
+ function pairedRoutes(members,axis,cross,ns,peers,manualLanes){const count=members.length/2,pairs=Array.from({length:count},(_,i)=>[members[i],members.at(-1-i)]),choices=pairs.map((pair,i)=>{const preferred=manualLanes.get(i)??(i+1)/(count+1),values=new Set([preferred,(i+1)/(count+1),.5]);for(let k=1;k<10;k++)values.add(k/10);for(const v of pair){const span=v.t[cross]-v.s[cross];if(!span)continue;values.add(18/Math.abs(span));values.add(1-18/Math.abs(span));for(const n of ns.values()){const size=cross==='x'?'w':'h',other=axis==='x'?'w':'h';if(n[axis]>Math.max(v.s[axis],v.t[axis])+24||n[axis]+n[other]<Math.min(v.s[axis],v.t[axis])-24)continue;values.add((n[cross]-16-v.s[cross])/span);values.add((n[cross]+n[size]+16-v.s[cross])/span);}}return [...values].filter(v=>v>0&&v<1).sort((a,b)=>Math.abs(a-preferred)-Math.abs(b-preferred));});let attempts=0;
+  const projected=(points,a,b)=>{const span=a.t[cross]-a.s[cross],along=a.t[axis]-a.s[axis];if(!span||!along)return null;return points.map(p=>({[cross]:b.s[cross]+(p[cross]-a.s[cross])/span*(b.t[cross]-b.s[cross]),[axis]:b.s[axis]+(p[axis]-a.s[axis])/along*(b.t[axis]-b.s[axis])}));};
+  const search=(index,reserved,routes)=>{if(index===count)return routes;if(attempts>160)return null;const [a,b]=pairs[index],clean=v=>({...v.e,manualRoute:undefined,manualRouteMode:undefined,waypoints:undefined}),accept=(ra,rb)=>{if(!ra||!rb)return null;const next=new Map(routes);next.set(a.e.id,ra);next.set(b.e.id,rb);return search(index+1,[...reserved,ra,rb],next);};
+   for(const fraction of choices[index]){attempts++;const ra=avoidRoute(clean(a),ns,reserved,a.s[cross]+(a.t[cross]-a.s[cross])*fraction,true);if(!ra)continue;const rb=avoidRoute(clean(b),ns,[...reserved,ra],b.s[cross]+(b.t[cross]-b.s[cross])*fraction,true),result=accept(ra,rb);if(result)return result;if(attempts>160)return null;}
+   for(const [first,second,reverse] of [[a,b,false],[b,a,true]]){const seed=avoidRoute(clean(first),ns,reserved,first.s[cross]+(first.t[cross]-first.s[cross])*.5),points=seed&&projected(seed.points,first,second);if(!points)continue;const partner=avoidRoute(clean(second),ns,[...reserved,seed],undefined,true,points),result=reverse?accept(partner,seed):accept(seed,partner);if(result)return result;}return null;
+  };return search(0,peers,new Map());
+ }
+ function bundleRoutes(d){const out=previous(d),ns=new Map(d.nodes.map(n=>[n.id,n]));
+  const obstacles=d.nodes.filter(n=>n.type!=='summary');
+  // Moving a branch also changes the corridors of unselected connections.
+  // Repair obstructed automatic paths without changing their stored controls.
+  for(const e of d.edges){if(e.bus||e.proxy||e.style==='straight'||e.manualRoute?.length||e.waypoints?.length)continue;const old=out.routes.get(e.id);if(old?.points.slice(1).some((v,i)=>obstacles.some(n=>n.id!==e.source&&n.id!==e.target&&segmentBox(old.points[i],v,n)))){const route=avoidRoute(e,ns,[]);if(route){if(e.style==='wire')route.d=C.roundedPath(route.points);out.routes.set(e.id,route);}}}
+  const handled=new Set(),contexts=[...d.symmetryGroups||[]];
+  for(const n of d.nodes){if(n.branchCrossings===true||contexts.some(g=>g.parent===n.id))continue;const es=d.edges.filter(e=>e.source===n.id&&!e.bus&&!e.proxy&&!e.manualRoute?.length&&!e.waypoints?.length&&ns.has(e.target)&&!['comment','summary'].includes(ns.get(e.target).type));if(es.length>1)contexts.push({parent:n.id,edges:es.map(e=>e.id)});}
+  for(const group of contexts){if(group.allowCrossings||group.bus)continue;const selected=d.edges.filter(e=>group.edges?.includes(e.id)),hub=selected.every(e=>e.source===selected[0]?.source)?selected[0]?.source:null,edges=d.edges.filter(e=>(group.edges?.includes(e.id)||hub&&e.source===hub)&&!e.bus&&!e.proxy&&e.style!=='straight'&&ns.has(e.source)&&ns.has(e.target)&&!['comment','summary'].includes(ns.get(e.target).type));if(edges.length<2||edges.every(e=>handled.has(e.id)))continue;edges.forEach(e=>handled.add(e.id));
+   const targets=new Set(edges.map(e=>e.target)),peers=d.edges.filter(e=>!edges.includes(e)&&targets.has(e.source)&&!e.bus&&!e.proxy).map(e=>out.routes.get(e.id)).filter(Boolean),tips=edges.map(e=>({e,s:C.endpoint(ns.get(e.source),e.sourcePort,'right'),t:C.endpoint(ns.get(e.target),e.targetPort,'left')})),vertical=tips.every(v=>['left','right'].includes(v.s.side)&&['left','right'].includes(v.t.side)),horizontal=tips.every(v=>['top','bottom'].includes(v.s.side)&&['top','bottom'].includes(v.t.side)),axis=vertical?'y':'x',cross=vertical?'x':'y';tips.sort((a,b)=>a.s[axis]-b.s[axis]||a.t[axis]-b.t[axis]||a.e.id.localeCompare(b.e.id));
+   const up=tips.filter(v=>v.t[axis]<v.s[axis]),down=tips.filter(v=>v.t[axis]>=v.s[axis]),members=tips.filter(v=>group.edges?.includes(v.e.id)),paired=!!group.heads&&members.length%2===0&&members.every(v=>v.s.side===members[0].s.side&&v.t.side===members[0].t.side);
+   const manualLanes=new Map();if(paired)for(let i=0;i<members.length;i++){const v=members[i],route=C.edgePath(v.e,ns),ps=route?.points;if(!(v.e.manualRoute?.length||v.e.waypoints?.length)||ps?.length!==4||Math.abs(ps[1][axis]-v.s[axis])>eps||Math.abs(ps[2][axis]-v.t[axis])>eps||Math.abs(ps[1][cross]-ps[2][cross])>eps)continue;const pair=Math.min(i,members.length-1-i),fraction=(ps[1][cross]-v.s[cross])/(v.t[cross]-v.s[cross]);if(Number.isFinite(fraction)&&fraction>0&&fraction<1&&!manualLanes.has(pair))manualLanes.set(pair,fraction);}
+   // Reserve short neighbouring links before routing the longer symmetric
+   // branches around them. Otherwise a long lane can fence in the short link.
+   const manual=e=>!!(e.manualRoute?.length||e.waypoints?.length),ordered=[...tips].sort((a,b)=>Number(manual(b.e))-Number(manual(a.e))||Math.abs(a.t[cross]-a.s[cross])-Math.abs(b.t[cross]-b.s[cross])||tips.indexOf(a)-tips.indexOf(b));
+   if(paired&&(vertical||horizontal)){
+    for(const v of ordered.filter(v=>!members.includes(v))){const subset=v.t[axis]<v.s[axis]?up:down,index=subset.indexOf(v),rank=subset===up?index+1:subset.length-index,lane=v.s[cross]+(v.t[cross]-v.s[cross])*rank/(subset.length+1),route=avoidRoute(v.e,ns,peers,lane);if(route){if(v.e.style==='wire')route.d=C.roundedPath(route.points);out.routes.set(v.e.id,route);peers.push(route);}else peers.push(out.routes.get(v.e.id));}
+    const routes=pairedRoutes(members,axis,cross,ns,peers,manualLanes);if(routes){for(const [id,route] of routes){if(members.find(v=>v.e.id===id).e.style==='wire')route.d=C.roundedPath(route.points);out.routes.set(id,route);}continue;}
+    (out.symmetryConflicts||=[]).push(group.id||group.bus);for(let i=ordered.length-1;i>=0;i--)if(!members.includes(ordered[i]))ordered.splice(i,1);
+   }
+   for(const v of ordered){let lane;const member=members.indexOf(v),pair=paired&&member>=0?Math.min(member,members.length-1-member):-1,pairedManual=manualLanes.has(pair);if((!manual(v.e)||pairedManual)&&(vertical||horizontal)){const subset=v.t[axis]<v.s[axis]?up:down,index=subset.indexOf(v),rank=paired&&member>=0?Math.min(member+1,members.length-member):subset===up?index+1:subset.length-index,denominator=paired&&member>=0?members.length/2+1:subset.length+1;lane=v.s[cross]+(v.t[cross]-v.s[cross])*(manualLanes.get(pair)??rank/denominator);}
+    const route=avoidRoute(pairedManual?{...v.e,manualRoute:undefined,waypoints:undefined}:v.e,ns,peers,lane);if(route){if(v.e.style==='wire')route.d=C.roundedPath(route.points);out.routes.set(v.e.id,route);peers.push(route);}else{(out.conflicts||=[]).push(v.e.id);peers.push(out.routes.get(v.e.id));}
+   }
+  }return out;
+ }
+ Object.assign(C,{bundleRoutes,segmentBox,routeIntersection:intersection,commonRouteJunction:commonJunction});
+})(Core);
 
 /* Interactive layout and property transfer. Schema 6 remains backwards compatible. */
 (function(C){
@@ -1308,7 +1386,7 @@ Core.deleteSelection=function(pg,selection){
 /* Adaptive views derive from authored coordinates. Only explicit edits persist. */
 (function(C){
  const prev={...C},annotation=n=>n?.type==='comment'||n?.type==='note'&&!n.flowNode;
- const displayGraphs=new WeakMap();
+ const displayGraphs=new WeakMap(),movementSamples=new WeakMap();
  function descendantsInGraph(g,id){const out=new Set(),queue=[id];for(let i=0;i<queue.length;i++)for(const next of g.adj.get(queue[i])||[])if(next!==id&&!out.has(next)){out.add(next);queue.push(next);}return out;}
  const active=b=>b.symmetry===undefined?!!b.autoAlign:!!b.symmetry;
  function coupledRoots(pg,id){
@@ -1326,6 +1404,14 @@ Core.deleteSelection=function(pg,selection){
   if(!heads.length)return [];const g=graph||C.graph(pg),stops=new Set([...heads,...excluded]),counts=new Map(),out=heads.map(head=>{const ids=new Set([head]),queue=[head];for(let i=0;i<queue.length;i++)for(const id of g.adj.get(queue[i])||[])if(!stops.has(id)&&!ids.has(id)){ids.add(id);queue.push(id);}for(const id of ids)counts.set(id,(counts.get(id)||0)+1);return {head,ids};});
   for(const b of out)b.ids=new Set([...b.ids].filter(id=>counts.get(id)===1));return out;
  }
+ // Packing treats shared continuations and symmetry cohorts as one workflow.
+ // Exclusive branches are suitable for alignment, but omit shared destinations.
+ function packingBranches(pg,heads,excluded,d){const g=displayGraphs.get(d),ns=new Map(d.nodes.map(n=>[n.id,n])),stops=new Set([...heads,...excluded]),all=heads.map(head=>{const ids=new Set([head]),queue=[head];for(let i=0;i<queue.length;i++)for(const id of g.adj.get(queue[i])||[])if(!stops.has(id)&&!ids.has(id)){ids.add(id);queue.push(id);}return {head,heads:[head],ids};}),parent=all.map((_,i)=>i),find=i=>{while(parent[i]!==i){parent[i]=parent[parent[i]];i=parent[i];}return i;},join=(a,b)=>{parent[find(b)]=find(a);},owner=new Map();
+  for(let i=0;i<all.length;i++)for(const id of all[i].ids){const n=ns.get(id)||g.byId.get(id);if(annotation(n)||n?.type==='summary')continue;if(owner.has(id))join(i,owner.get(id));else owner.set(id,i);}
+  for(const group of d.symmetryGroups){const owners=all.map((b,i)=>group.heads.some(id=>b.ids.has(id))?i:-1).filter(i=>i>=0);for(let i=1;i<owners.length;i++)join(owners[0],owners[i]);}
+  const out=new Map();for(let i=0;i<all.length;i++){const key=find(i),b=all[i];if(!out.has(key))out.set(key,{head:b.head,heads:[],ids:new Set()});const item=out.get(key);item.heads.push(b.head);for(const id of b.ids)item.ids.add(id);}
+  const authored=new Map(pg.nodes.map(n=>[n.id,n])),order=b=>Math.min(...b.heads.map(id=>{const n=authored.get(id);return n.y+(n.offsetY||0);}));return [...out.values()].sort((a,b)=>order(a)-order(b));
+ }
  function symmetry(pg,d,config,edgeIds){
   const ns=new Map(d.nodes.map(n=>[n.id,n])),edges=d.edges.filter(e=>edgeIds.includes(e.id)&&!e.proxy&&ns.has(e.source)&&ns.has(e.target));if(edges.length<2)return;
   const terminal=role=>{const items=new Map();for(const e of edges){const n=ns.get(e[role]),point=C.endpoint(n,e[role+'Port'],role==='source'?'right':'left');if(!items.has(n.id))items.set(n.id,{n,point});}return [...items.values()];};
@@ -1333,28 +1419,68 @@ Core.deleteSelection=function(pg,selection){
   const axis=config.axis||config.symmetryAxis||(hub?(['left','right'].includes(hub.point.side)?'y':'x'):(config.orientation==='horizontal'?'x':'y')),cross=axis==='y'?'x':'y',size=axis==='y'?'h':'w';
   const all=new Set([...sources,...targets].map(t=>t.n.id));if(all.size!==sources.length+targets.length)return;
   const groups=hub?[sources.length===1?targets:sources]:[sources,targets],hubRole=sources.length===1?'source':'target',mid=hub?edges.reduce((sum,e)=>sum+C.endpoint(ns.get(e[hubRole]),e[hubRole+'Port'],hubRole==='source'?'right':'left')[axis],0)/edges.length:sources.reduce((s,t)=>s+t.point[axis],0)/sources.length,gap=Math.max(16,Number(config.gap??config.alignGap)||64);
-  for(const group of groups){if(group.length<2)continue;group.sort((a,b)=>a.point[axis]-b.point[axis]||a.n.id.localeCompare(b.n.id));
+  for(const group of groups){if(group.length<2)continue;
+   // Preserve the order of distinct table/row ports, rather than the accidental
+   // order of the destination blocks. Reversing that order forces crossings.
+   const order=t=>hub?edges.filter(e=>e[group===sources?'source':'target']===t.n.id).reduce((sum,e,i,es)=>sum+C.endpoint(hub.n,e[hubRole+'Port'],hubRole==='source'?'right':'left')[axis]/es.length,0):t.point[axis];
+   group.sort((a,b)=>order(a)-order(b)||a.point[axis]-b.point[axis]||a.n.id.localeCompare(b.n.id));
    const bs=branches(pg,group.map(t=>t.n.id),new Set([...all].filter(id=>!group.some(t=>t.n.id===id))),displayGraphs.get(d));
-   const boxes=bs.map((b,i)=>C.bounds(config.allowCrossings===true?[group[i].n]:[...b.ids].map(id=>ns.get(id)).filter(n=>n&&!n.anchorId&&!annotation(n))));
+   const boxes=bs.map((b,i)=>C.bounds(config.allowCrossings===true?[group[i].n]:[...b.ids].map(id=>ns.get(id)).filter(n=>n&&n.type!=='summary')));
    if(bs.some(b=>[...b.ids].some(id=>ns.get(id)?.locked&&!annotation(ns.get(id)))))continue;
    let step=(group.at(-1).point[axis]-group[0].point[axis])/(group.length-1);
    for(let i=1;i<group.length;i++)step=Math.max(step,boxes[i-1][axis]+boxes[i-1][size]-group[i-1].point[axis]+group[i].point[axis]-boxes[i][axis]+gap);
    const common=group.reduce((s,t)=>s+t.point[cross],0)/group.length,alignCross=group.every(t=>t.point.side===group[0].point.side);
-   if(hub&&config.allowCrossings!==true){const role=sources.length===1?'target':'source',siblings=[...new Set(pg.edges.filter(e=>e[hubRole]===hub.n.id&&!group.some(t=>t.n.id===e[role])&&!C.edgeRelationship(pg,e)?.annotation).map(e=>e[role]))],obstacles=branches(pg,siblings,new Set([...all,hub.n.id]),displayGraphs.get(d)).flatMap(b=>[...b.ids]).map(id=>ns.get(id)).filter(n=>n&&!n.anchorId&&!annotation(n)),crossSize=axis==='y'?'w':'h';
-    for(let pass=0;pass<=obstacles.length;pass++){let next=step;for(let i=0;i<group.length;i++){const factor=i-(group.length-1)/2;if(!factor)continue;const r={...boxes[i],[axis]:boxes[i][axis]+mid+factor*step-group[i].point[axis],[cross]:boxes[i][cross]+(alignCross?common-group[i].point[cross]:0)};for(const o of obstacles)if(r[cross]<o[cross]+o[crossSize]&&r[cross]+r[crossSize]>o[cross]&&r[axis]<o[axis]+o[size]+gap&&r[axis]+r[size]+gap>o[axis])next=Math.max(next,factor>0?(o[axis]+o[size]+gap-mid-boxes[i][axis]+group[i].point[axis])/factor:(mid+boxes[i][axis]+boxes[i][size]-group[i].point[axis]+gap-o[axis])/-factor);}if(next<=step+.001)break;step=next;}
+   let lateral=0;
+   if(config.allowCrossings!==true){
+    const owned=new Set(bs.flatMap(b=>[...b.ids])),role=group===sources?'source':'target',siblings=hub?branches(pg,[...new Set(pg.edges.filter(e=>e[hubRole]===hub.n.id&&!group.some(t=>t.n.id===e[role])&&!C.edgeRelationship(pg,e)?.annotation).map(e=>e[role]))],new Set([...all,hub.n.id]),displayGraphs.get(d)).flatMap(b=>[...b.ids]):[],obstacles=d.nodes.filter(n=>(!owned.has(n.id)||n.locked)&&n.id!==hub?.n.id&&(config.avoidObstacles||siblings.includes(n.id))&&n.type!=='summary'),crossSize=axis==='y'?'w':'h',clearance=config.avoidObstacles?16:gap;
+    // Test real rectangles, not the empty space inside a branch's envelope.
+    // Search both sides of an obstacle; increasing the spacing alone can send
+    // the last branch through an unrelated workflow or inflate it indefinitely.
+    let minimum=0;for(let i=1;i<group.length;i++)minimum=Math.max(minimum,boxes[i-1][axis]+boxes[i-1][size]-group[i-1].point[axis]+group[i].point[axis]-boxes[i][axis]+gap);
+    // Weighted median minimizes the axis displacement. Test that optimum first;
+    // a clear corridor needs no exhaustive search over every obstacle boundary.
+    const breaks=group.map((t,i)=>({factor:i-(group.length-1)/2,value:(t.point[axis]-mid)/(i-(group.length-1)/2)})).filter(v=>v.factor).sort((a,b)=>a.value-b.value),weight=breaks.reduce((s,v)=>s+Math.abs(v.factor),0);let sum=0,optimum=minimum;for(const v of breaks){sum+=Math.abs(v.factor);if(sum>=weight/2){optimum=Math.max(minimum,v.value);break;}}
+    const axisCost=spacing=>group.reduce((s,t,i)=>s+Math.abs(mid+(i-(group.length-1)/2)*spacing-t.point[axis]),0),lowerBound=config.fit===true?minimum*group.length:axisCost(optimum),candidates=new Set([config.fit===true?minimum:Math.max(minimum,step),optimum,minimum]);
+    const pieces=bs.flatMap((b,i)=>[...b.ids].map(id=>ns.get(id)).filter(n=>n&&!n.locked&&n.type!=='summary').map(n=>({n,i,factor:i-(group.length-1)/2})));
+    let best=null;
+    const evaluate=spacing=>{const forbidden=[];
+     for(const {n,i,factor} of pieces){const start=n[axis]+mid+factor*spacing-group[i].point[axis],side=n[cross]+(alignCross?common-group[i].point[cross]:0);
+      for(const o of obstacles)if(start<o[axis]+o[size]+clearance-.001&&start+n[size]+clearance>o[axis]+.001)forbidden.push([o[cross]-clearance-side-n[crossSize],o[cross]+o[crossSize]+clearance-side]);
+     }
+     const offsets=alignCross?[0,...forbidden.flat()]:[0];
+     for(const offset of offsets){if(forbidden.some(([lo,hi])=>offset>lo+.001&&offset<hi-.001))continue;
+      // A lateral shift must retain the outward direction of a shared hub.
+      if(hub&&alignCross&&(['left','right'].includes(hub.point.side)?'x':'y')===cross){const direction={right:1,left:-1,bottom:1,top:-1}[hub.point.side];if(direction&&group.every(t=>(t.point[cross]-hub.point[cross])*direction>=32)&&(common+offset-hub.point[cross])*direction<32)continue;}
+      const score=(config.fit===true?spacing*group.length:axisCost(spacing))+Math.abs(offset)*2*group.length;
+      if(!best||score<best.score-.001)best={spacing,offset,score};
+     }
+    };
+    for(const spacing of candidates){evaluate(spacing);if(best&&best.score<=lowerBound+.001)break;}
+    if(!best||best.score>lowerBound+.001){for(const {n,i,factor} of pieces)if(factor)for(const o of obstacles){const base=mid+n[axis]-group[i].point[axis];for(const v of [(o[axis]-clearance-base-n[size])/factor,(o[axis]+o[size]+clearance-base)/factor])if(v>=minimum&&Number.isFinite(v))candidates.add(v);}for(const spacing of candidates){evaluate(spacing);if(best&&best.score<=lowerBound+.001)break;}}
+    if(!best){(d.symmetryConflicts||=[]).push(config.id||config.bus);continue;}step=best.spacing;lateral=best.offset;
    }
-   group.forEach((t,i)=>{const delta=mid+(i-(group.length-1)/2)*step-t.point[axis],other=alignCross?common-t.point[cross]:0;shift(d,bs[i].ids,axis==='x'?delta:other,axis==='y'?delta:other);});
-   (d.symmetryGroups||=[]).push({id:config.id,bus:config.bus,parent:hub?.n.id,heads:group.map(t=>t.n.id),axis,role:group===sources?'source':'target'});
+   group.forEach((t,i)=>{const delta=mid+(i-(group.length-1)/2)*step-t.point[axis],other=(alignCross?common-t.point[cross]:0)+lateral;shift(d,bs[i].ids,axis==='x'?delta:other,axis==='y'?delta:other);});
+   (d.symmetryGroups||=[]).push({id:config.id,bus:config.bus,parent:hub?.n.id,heads:group.map(t=>t.n.id),axis,role:group===sources?'source':'target',allowCrossings:config.allowCrossings===true,edges:edges.map(e=>e.id)});
   }
  }
- function viewUnits(pg,d){const ns=new Map(d.nodes.map(n=>[n.id,n]));return C.layoutUnits(pg).map(u=>({...u,outside:u.outside||!u.heads.length&&u.members.size===1&&!pg.edges.some(e=>u.members.has(e.source)||u.members.has(e.target)),ids:u.members,list:[...u.members].map(id=>ns.get(id)).filter(n=>n&&!n.anchorId&&!annotation(n))})).filter(u=>u.list.length);}
+ function viewUnits(pg,d){const ns=new Map(d.nodes.map(n=>[n.id,n]));let units=C.layoutUnits(pg).map(u=>({...u,outside:u.outside||!u.heads.length&&u.members.size===1&&!pg.edges.some(e=>u.members.has(e.source)||u.members.has(e.target)),ids:u.members,list:[...u.members].map(id=>ns.get(id)).filter(n=>n&&n.type!=='summary')})).filter(u=>u.list.length);
+  // Packing must translate symmetric workflows together. Packing their bands
+  // independently destroys the very port distances established just above.
+  for(const group of d.symmetryGroups||[]){const joined=units.filter(u=>!u.outside&&group.heads.some(id=>u.ids.has(id)));if(joined.length<2)continue;const members=new Set(joined.flatMap(u=>[...u.ids]));units=units.filter(u=>!joined.includes(u));units.push({id:joined[0].id,heads:joined.flatMap(u=>u.heads),ids:members,members,list:joined.flatMap(u=>u.list),outside:false});}
+  const authored=new Map(pg.nodes.map(n=>[n.id,n])),order=u=>{const heads=u.heads.map(id=>authored.get(id)).filter(Boolean);return heads.length?Math.min(...heads.map(n=>n.y+(n.offsetY||0))):Math.min(...u.list.map(n=>n.y));};
+  // A distant output does not determine the ordering of entire workflows.
+  // Follow their authored starts so a small drag cannot swap two long bands.
+  return units.sort((a,b)=>order(a)-order(b));
+ }
  function envelopes(pg,d,compact,space,options){
-  const gap=Math.max(24,Number(options.branchGap??options.collisionGap)||64),units=viewUnits(pg,d),placed=[];
+  const gap=Math.max(24,Math.min(600,Number(options.pipelineGap??options.branchGap??options.collisionGap)||64)),units=viewUnits(pg,d),placed=[];
   const rectangle=u=>C.bounds(u.list),crosses=(a,b)=>a.x<b.x+b.w&&a.x+a.w>b.x;
-  const fixed=units.filter(u=>u.list.some(n=>n.locked)&&!u.outside);for(const u of fixed)placed.push({u,box:rectangle(u)});
+  const raw=new Map(pg.nodes.map(n=>[n.id,{...n,x:n.x+(n.offsetX||0),y:n.y+(n.offsetY||0)}])),overlap=(a,b,margin=0)=>crosses(a,b)&&a.y<b.y+b.h+margin&&a.y+a.h+margin>b.y;
+  const outsideHit=(u,v,dy)=>u.list.some(n=>v.u.list.some(o=>overlap({...n,y:n.y+dy},o,gap)&&!overlap(raw.get(n.id),raw.get(o.id))));
+  const fixed=units.filter(u=>u.outside||u.list.some(n=>n.locked));for(const u of fixed)placed.push({u,box:rectangle(u)});
   for(const u of units){if(u.outside||fixed.includes(u))continue;let box=rectangle(u),dy=0;
    if(compact&&u.heads.length){const peers=placed.filter(v=>!v.u.outside&&crosses(box,v.box));if(peers.length)dy=Math.max(...peers.map(v=>v.box.y+v.box.h+gap))-box.y;}
-   if(space||compact)for(let pass=0;pass<=units.length;pass++){const shifted={...box,y:box.y+dy},hits=placed.filter(v=>crosses(shifted,v.box)&&shifted.y<v.box.y+v.box.h+gap&&shifted.y+shifted.h+gap>v.box.y);if(!hits.length)break;dy=Math.max(...hits.map(v=>v.box.y+v.box.h+gap))-box.y;}
+   if(space||compact)for(let pass=0;pass<=units.length;pass++){const shifted={...box,y:box.y+dy},hits=placed.filter(v=>v.u.outside?outsideHit(u,v,dy):overlap(shifted,v.box,gap));if(!hits.length)break;dy=Math.max(...hits.map(v=>v.box.y+v.box.h+gap))-box.y;}
    if(dy){shift(d,u.ids,0,dy);box=rectangle(u);}placed.push({u,box});
   }
   d.units=units;d.pipelineBounds=units.filter(u=>!u.outside).map(u=>({id:u.id,heads:u.heads,members:[...u.ids],...rectangle(u)}));
@@ -1363,20 +1489,50 @@ Core.deleteSelection=function(pg,selection){
  function compactForks(pg,d,options){if(!d.hidden.size)return;const ns=new Map(d.nodes.map(n=>[n.id,n])),gap=Math.max(24,Number(options.branchGap)||64),parents=d.nodes.filter(n=>!n.table&&n.type!=='decision'&&!annotation(n)),descendants=new Map(parents.map(n=>[n.id,descendantsInGraph(displayGraphs.get(d),n.id)]));parents.sort((a,b)=>descendants.get(a.id).size-descendants.get(b.id).size);
    for(const parent of parents){if(d.symmetryGroups.some(g=>g.parent===parent.id))continue;if(![...descendants.get(parent.id)].some(id=>d.hidden.has(id)))continue;
    const heads=[...new Set(pg.edges.filter(e=>C.edgeRelationship(pg,e)?.parent===parent.id&&!C.edgeRelationship(pg,e)?.annotation).map(e=>C.edgeRelationship(pg,e).child))].filter(id=>ns.has(id));if(heads.length<2||heads.some(id=>ns.get(id).x<parent.x+parent.w))continue;
-   const bs=branches(pg,heads,new Set([parent.id]),displayGraphs.get(d)),box=b=>C.bounds([...b.ids].map(id=>ns.get(id)).filter(n=>n&&!n.anchorId&&!annotation(n)));if(bs.some(b=>[...b.ids].some(id=>ns.get(id)?.locked&&!annotation(ns.get(id)))))continue;bs.sort((a,b)=>box(a).y-box(b).y);let cursor=null;for(const b of bs){const r=box(b);if(cursor!==null)shift(d,b.ids,0,cursor-r.y);cursor=(cursor??r.y)+r.h+gap;}
+   const bs=packingBranches(pg,heads,new Set([parent.id]),d),box=b=>C.bounds([...b.ids].map(id=>ns.get(id)).filter(n=>n&&n.type!=='summary'));if(bs.length<2||bs.some(b=>[...b.ids].some(id=>ns.get(id)?.locked&&!annotation(ns.get(id)))))continue;let cursor=null;for(const b of bs){const r=box(b);if(cursor!==null)shift(d,b.ids,0,cursor-r.y);cursor=(cursor??r.y)+r.h+gap;}
+  }
+ }
+ function separateVisibleBranches(pg,d,options){const ns=new Map(d.nodes.map(n=>[n.id,n])),g=displayGraphs.get(d),gap=Math.max(24,Number(options.branchGap)||64),forks=[],byParent=new Map();
+  for(const e of pg.edges){const r=C.edgeRelationship(pg,e);if(!r||r.annotation||!ns.has(r.child))continue;if(!byParent.has(r.parent))byParent.set(r.parent,new Set());byParent.get(r.parent).add(r.child);}
+  for(const parent of d.nodes){const heads=[...byParent.get(parent.id)||[]];if(heads.length>1)forks.push({parent,heads,depth:descendantsInGraph(g,parent.id).size});}
+  forks.sort((a,b)=>a.depth-b.depth);
+  for(const {parent,heads} of forks){const bs=packingBranches(pg,heads,new Set([parent.id]),d).map(b=>({...b,list:[...b.ids].map(id=>ns.get(id)).filter(n=>n&&n.type!=='summary')})).filter(b=>b.list.length);for(const b of bs)b.fixed=b.list.some(n=>n.locked)||d.symmetryGroups.some(group=>group.parent===parent.id&&group.heads.some(id=>b.ids.has(id)));bs.sort((a,b)=>Number(b.fixed)-Number(a.fixed));const placed=[];
+   for(const b of bs){if(b.fixed){placed.push(...b.list);continue;}let dy=0;for(let pass=0;pass<=d.nodes.length;pass++){let next=dy;for(const n of b.list)for(const o of placed)if(n.x<o.x+o.w&&n.x+n.w>o.x&&n.y+dy<o.y+o.h+gap-.001&&n.y+n.h+dy+gap>o.y+.001)next=Math.max(next,o.y+o.h+gap-n.y);if(next<=dy+.001)break;dy=next;}if(dy)shift(d,b.ids,0,dy);placed.push(...b.list);}
+  }
+ }
+ // Upstream hubs follow the compacted terminals, without moving their branches
+ // or writing the projected position back into the document.
+ function centreCompactHubs(pg,d,unconstrained=true){
+  const ns=new Map(d.nodes.map(n=>[n.id,n])),g=displayGraphs.get(d),outside=new Set(C.layoutUnits(pg).filter(u=>u.outside).flatMap(u=>[...u.members]));
+  const hubs=d.nodes.filter(n=>outside.has(n.id)&&!n.locked&&!n.anchorId&&!n.table&&n.type!=='decision'&&!annotation(n));
+  hubs.sort((a,b)=>descendantsInGraph(g,a.id).size-descendantsInGraph(g,b.id).size);
+  for(const hub of hubs){
+   const constraint=d.symmetryGroups.find(g=>g.parent===hub.id);
+   if(!constraint&&!unconstrained)continue;
+   if(constraint){const es=d.edges.filter(e=>constraint.edges.includes(e.id)),role=constraint.role==='source'?'target':'source',other=role==='source'?'target':'source',axis=constraint.axis,ports=es.map(e=>C.endpoint(hub,e[role+'Port'],role==='source'?'right':'left')[axis]),terminals=es.map(e=>C.endpoint(ns.get(e[other]),e[other+'Port'],other==='source'?'right':'left')[axis]);hub[axis]+=(Math.min(...terminals)+Math.max(...terminals))/2-ports.reduce((s,v)=>s+v,0)/ports.length;continue;}
+   const links=d.edges.filter(e=>{const r=C.edgeRelationship(pg,e);return e.source===hub.id&&!e.proxy&&r?.parent===hub.id&&!r.annotation&&ns.has(e.target);});
+   if(new Set(links.map(e=>e.target)).size<2)continue;
+   const source=links.map(e=>C.endpoint(hub,e.sourcePort,'right')),targets=links.map(e=>C.endpoint(ns.get(e.target),e.targetPort,'left')),side=source[0].side,axis=['left','right'].includes(side)?'y':'x';
+   // A table or multi-port junction may represent several independent flows.
+   if(source.some(p=>p.side!==side||Math.abs(p[axis]-source[0][axis])>.01))continue;
+   const direction={right:1,left:-1,bottom:1,top:-1}[side],cross=axis==='y'?'x':'y';
+   if(!direction||targets.some((p,i)=>(p[cross]-source[i][cross])*direction<=0))continue;
+   hub[axis]+=(Math.min(...targets.map(p=>p[axis]))+Math.max(...targets.map(p=>p[axis])))/2-source[0][axis];
   }
  }
  function display(pg,folds=new Set(),compact=true,folded=new Set(),options={}){
   if(pg.collapseMode==='groups'||!pg.collapseMode&&pg.groups?.length&&!pg.nodes.some(n=>n.collapsible))return prev.display(pg,folds,compact,folded,options);
   const opts={...pg.layoutOptions,...options},neutral={...pg,layoutOptions:{...opts,autoSpace:false,busSymmetry:false},nodes:pg.nodes.map(n=>({...n,branchSymmetry:false})),buses:(pg.buses||[]).map(b=>({...b,symmetry:false,autoAlign:false})),symmetrySets:[]};
   const d=prev.display(neutral,expandedFolds(pg,folds),false,folded,{...opts,autoSpace:false,busSymmetry:false}),graph=C.graph(pg);displayGraphs.set(d,graph);d.buses=pg.buses||[];d.symmetryGroups=[];
-  const constraints=[];for(const n of pg.nodes)if(n.type==='decision'&&n.branchSymmetry){const es=pg.edges.filter(e=>e.source===n.id&&!e.bus&&!C.edgeRelationship(pg,e)?.annotation),sides=es.map(e=>C.port(n,e.sourcePort).side);constraints.push({config:{id:'condition:'+n.id,axis:sides.includes('left')&&sides.includes('right')?'x':'y',gap:n.branchGap||64,allowCrossings:n.branchCrossings},edges:es.map(e=>e.id)});}
+  const constraints=[];for(const n of pg.nodes)if(n.type==='decision'&&n.branchSymmetry){const es=pg.edges.filter(e=>e.source===n.id&&!e.bus&&!C.edgeRelationship(pg,e)?.annotation),sides=es.map(e=>C.port(n,e.sourcePort).side);constraints.push({config:{id:'condition:'+n.id,axis:n.branchAxis||(sides.includes('left')&&sides.includes('right')?'x':'y'),gap:n.branchGap||64,allowCrossings:n.branchCrossings,avoidObstacles:n.branchAvoidObstacles},edges:es.map(e=>e.id)});}
   for(const b of pg.buses||[])if(active(b))constraints.push({config:{...b,bus:b.id},edges:pg.edges.filter(e=>e.bus===b.id).map(e=>e.id)});
-  for(const set of pg.symmetrySets||[])if(set.enabled!==false&&!constraints.some(c=>c.config.bus&&c.edges.length===set.edges.length&&set.edges.every(id=>c.edges.includes(id))))constraints.push({config:set,edges:set.edges});
+  for(const set of pg.symmetrySets||[])if(set.enabled!==false&&!constraints.some(c=>c.config.bus&&c.edges.length===set.edges.length&&set.edges.every(id=>c.edges.includes(id))))constraints.push({config:{avoidObstacles:true,...set},edges:set.edges});
   const depths=new Map(),edgeMap=new Map(pg.edges.map(e=>[e.id,e]));for(const c of constraints)c.depth=Math.max(0,...c.edges.map(id=>{const source=edgeMap.get(id)?.source;if(!source)return 0;if(!depths.has(source))depths.set(source,descendantsInGraph(graph,source).size);return depths.get(source);}));constraints.sort((a,b)=>a.depth-b.depth);
   for(const c of constraints)symmetry(pg,d,c.config,c.edges);
   if(compact)compactForks(pg,d,opts);
+  if(compact||opts.autoSpace!==false)separateVisibleBranches(pg,d,opts);
   if(compact||opts.autoSpace!==false)envelopes(pg,d,compact,opts.autoSpace!==false,opts);else{d.pipelineBounds=viewUnits(pg,d).filter(u=>!u.outside).map(u=>({id:u.id,heads:u.heads,members:[...u.ids],...C.bounds(u.list)}));}
+  if(compact||opts.autoSpace!==false)centreCompactHubs(pg,d,compact);
   const raw=new Map(pg.nodes.map(n=>[n.id,n])),shown=new Map(d.nodes.map(n=>[n.id,n]));
   for(const n of d.nodes)if(n.anchorId&&!n.locked){const h=shown.get(n.anchorId);if(h){n.x=h.x+(n.anchorX||0);n.y=h.y+(n.anchorY||0);}}
   // Linked comments follow their host, but never define a pipeline boundary.
@@ -1389,15 +1545,38 @@ Core.deleteSelection=function(pg,selection){
   }
   for(const n of pg.nodes)if(n.locked&&!picked.has(n.id))plan.ids.delete(n.id);plan.locked=[...picked].filter(id=>{const n=pg.nodes.find(n=>n.id===id);return n?.locked||n?.editLocked});return plan;
  }
- function prepareMove(base,ids,driver){const groups=display(base,new Set(),false,new Set(),{autoSpace:false}).symmetryGroups||[],moving=new Set(ids),raw=new Map(base.nodes.map(n=>[n.id,n])),mirrors=[];
+ function prepareMove(base,ids,driver,shown,view={}){const logical=display(base,new Set(),false,new Set(),{autoSpace:false}),d=shown||logical,groups=logical.symmetryGroups||[],moving=new Set(ids),raw=new Map(logical.nodes.map(n=>[n.id,n])),mirrors=[];
   const applicable=groups.filter(g=>g.heads.includes(driver)&&!ids.has(g.parent)&&g.heads.filter(id=>ids.has(id)).length===1);
   for(const g of applicable){const own=new Set(C.exclusiveBranches(base,g.heads).flatMap(b=>[...b.ids])),desc=C.relativeDescendantsGraph(base,driver);for(const id of moving)if(desc.has(id)&&!own.has(id))moving.delete(id);}
-  for(const g of applicable){const axis=g.axis||'y',heads=[...g.heads].sort((a,b)=>raw.get(a)[axis]-raw.get(b)[axis]),i=heads.indexOf(driver),centre=(heads.length-1)/2,denom=i-centre;if(!denom)continue;C.exclusiveBranches(base,heads).forEach((b,j)=>{if(b.head!==driver)mirrors.push({ids:b.ids,axis,factor:(j-centre)/denom});});}return {moving,mirrors};
+  for(const g of applicable){const axis=g.axis||'y',heads=[...g.heads].sort((a,b)=>raw.get(a)[axis]-raw.get(b)[axis]),i=heads.indexOf(driver),centre=(heads.length-1)/2,denom=i-centre;if(!denom)continue;C.exclusiveBranches(base,heads).forEach((b,j)=>{if(b.head!==driver)mirrors.push({ids:b.ids,axis,factor:(j-centre)/denom});});}
+  const related=groups.filter(g=>moving.has(g.parent)||g.heads.some(id=>moving.has(id))),strict=view.strict===true||applicable.some(g=>!g.allowCrossings),lines=related.some(g=>!g.allowCrossings),model=applicable.length?C.materializeLayout(base,logical):base;
+  return {moving,mirrors,model,driver,stationary:new Set(applicable.map(g=>g.parent).filter(id=>id&&!moving.has(id))),view:{folds:new Set(),compact:false,folded:new Set(),options:{autoSpace:false},...view},strict,lines,before:d,issues:strict?new Set(geometryConflicts(d,lines)):null};
  }
- function moveNodes(base,ids,dx,dy,driver,prepared){const out=C.clone(base),raw=new Map(base.nodes.map(n=>[n.id,n])),now=new Map(out.nodes.map(n=>[n.id,n])),plan=prepared||prepareMove(base,ids,driver),moving=plan.moving;
+ function moveNodes(base,ids,dx,dy,driver,prepared){const plan=prepared||prepareMove(base,ids,driver),attempt=(dx,dy)=>{const out=C.clone(plan.model||base),raw=new Map((plan.model||base).nodes.map(n=>[n.id,n])),now=new Map(out.nodes.map(n=>[n.id,n])),moving=plan.moving;
   const move=(set,x,y)=>{for(const id of set){const n=now.get(id),r=raw.get(id);if(!n||n.locked)continue;if(n.anchorId){if(!set.has(n.anchorId)){n.anchorX=(r.anchorX||0)+x;n.anchorY=(r.anchorY||0)+y;}}else{n.x=r.x+(r.offsetX||0)+x;n.y=r.y+(r.offsetY||0)+y;n.offsetX=n.offsetY=0;}}};
   move(moving,dx,dy);const affected=new Set(moving);
-  for(const mirror of plan.mirrors){move(mirror.ids,mirror.axis==='y'?dx:dx*mirror.factor,mirror.axis==='y'?dy*mirror.factor:dy);for(const id of mirror.ids)affected.add(id);}C.moveRouteObjects(out,affected,dx,dy,base);return out;
+  for(const mirror of plan.mirrors){move(mirror.ids,mirror.axis==='y'?dx:dx*mirror.factor,mirror.axis==='y'?dy*mirror.factor:dy);for(const id of mirror.ids)affected.add(id);}C.moveRouteObjects(out,affected,dx,dy,plan.model||base);return out;};
+  let acceptedDisplay=null,acceptedBundle=null,checks=0;
+  const valid=(out,x,y)=>{if(!plan.strict)return true;checks++;const v=plan.view,d=display(out,v.folds,v.compact,v.folded,v.options),a=plan.before.nodes.find(n=>n.id===driver),b=d.nodes.find(n=>n.id===driver);
+   // Collision packing must not send the grabbed block past the pointer or in
+   // the opposite direction. Stop at the boundary instead of moving a band.
+   if(a&&b&&['x','y'].some((key,i)=>{const delta=i?y:x,actual=b[key]-a[key];return Math.abs(actual)>Math.abs(delta)+2||actual*delta<-1;}))return false;
+   if([...plan.stationary].some(id=>{const a=plan.before.nodes.find(n=>n.id===id),b=d.nodes.find(n=>n.id===id);return a&&b&&Math.hypot(a.x-b.x,a.y-b.y)>.5;}))return false;
+   const bundle=C.bundleRoutes(d);if(geometryConflicts(d,plan.lines,bundle).some(key=>!plan.issues.has(key)))return false;acceptedDisplay=d;acceptedBundle=bundle;return true;};
+  const length=Math.hypot(dx,dy),sample=prepared&&movementSamples.get(plan),sameRay=p=>p&&dx*p.dx+dy*p.dy>=0&&Math.abs(dx*p.dy-dy*p.dx)<1e-9*Math.max(1,length*Math.hypot(p.dx,p.dy));
+  let out=attempt(dx,dy),fraction=1,rejected=null;if(!valid(out,dx,dy)){let lo=0,hi=1;out=C.clone(base);acceptedDisplay=plan.before;acceptedBundle=null;
+   const warm=length>0&&sample&&sameRay(sample.good)&&(Math.hypot(sample.good.dx,sample.good.dy)>0||sameRay(sample.bad))&&Math.hypot(sample.good.dx,sample.good.dy)<=length;
+   if(warm){lo=length?Math.hypot(sample.good.dx,sample.good.dy)/length:0;out=C.clone(sample.good.out);acceptedDisplay=sample.good.display;acceptedBundle=sample.good.bundle;if(sameRay(sample.bad))hi=Math.min(1,Math.hypot(sample.bad.dx,sample.bad.dy)/length);}
+   // Continue refining a tested boundary across pointer frames. Each warm
+   // sample performs at most two extra checks, rather than searching all the
+   // way from the initial position eight times. Only validated geometry is
+   // displayed; a different direction starts a full search again.
+   for(let i=0;i<(warm?2:8)&&(hi-lo)*length>1;i++){const mid=(lo+hi)/2,candidate=attempt(dx*mid,dy*mid);if(valid(candidate,dx*mid,dy*mid)){lo=mid;out=candidate;}else hi=mid;}fraction=lo;rejected={dx:dx*hi,dy:dy*hi};}
+  if(prepared&&plan.strict)movementSamples.set(plan,{good:{dx:dx*fraction,dy:dy*fraction,out:C.clone(out),display:acceptedDisplay,bundle:acceptedBundle},bad:rejected});
+  const shown=acceptedDisplay,a=plan.before.nodes.find(n=>n.id===driver),b=shown?.nodes.find(n=>n.id===driver),limited=fraction<.999||a&&b&&Math.hypot(b.x-a.x-dx,b.y-a.y-dy)>2;
+  // The editor paints the exact geometry already checked for this sample.
+  // Recomputing it twice per pointer frame only wastes work and allocations.
+  Object.defineProperty(out,'movement',{value:{fraction,limited,checks,display:shown,bundle:acceptedBundle,nodes:out.nodes,edges:out.edges,buses:out.buses,reason:limited?'Перемещение ограничено симметрией или препятствием. Чтобы двигать ветвь отдельно, отключите её привязку симметрии.':''}});return out;
  }
  function setEdgeSymmetry(pg,edgeIds,{persistent=true,gap=64,axis='y',allowCrossings=false}={}){
   let out=C.clone(pg);const ids=[...new Set(edgeIds)];let edges=out.edges.filter(e=>ids.includes(e.id));if(edges.length<2||edges.length!==ids.length)throw Error('Выберите минимум две существующие связи');
@@ -1406,15 +1585,49 @@ Core.deleteSelection=function(pg,selection){
   if([...sources].some(id=>targets.has(id)))throw Error('Выберите соседние ветви, а не последовательные этапы');
   if(edges.some(e=>e.editLocked||out.buses.find(b=>b.id===e.bus)?.editLocked))throw Error('Снимите защиту выбранных связей');
   const roots=sources.size===1?[...targets]:targets.size===1?[...sources]:[...sources,...targets],branchIds=C.exclusiveBranches(out,roots).flatMap(b=>[...b.ids]);if(out.nodes.some(n=>branchIds.includes(n.id)&&n.locked&&!annotation(n)))throw Error('В выбранных ветвях есть фиксированный блок');
-  const wholeBus=bus&&out.edges.filter(e=>e.bus===bus.id).every(e=>ids.includes(e.id));
+  const wholeBus=bus&&out.edges.filter(e=>e.bus===bus.id).every(e=>ids.includes(e.id)),condition=sources.size===1&&out.nodes.find(n=>sources.has(n.id)&&n.type==='decision'),wholeCondition=condition&&out.edges.filter(e=>e.source===condition.id&&!e.bus&&!C.edgeRelationship(out,e)?.annotation).every(e=>ids.includes(e.id));
   if(bus&&!wholeBus&&active(bus))out=releaseSymmetry(out,bus.id,'bus');
   for(const set of [...out.symmetrySets||[]])if(set.edges.some(id=>ids.includes(id))&&!set.edges.every(id=>ids.includes(id))&&set.enabled!==false)out=releaseSymmetry(out,set.id);
   out.symmetrySets=(out.symmetrySets||[]).filter(s=>!s.edges.some(id=>ids.includes(id)));
-  const config={id:wholeBus?bus.id:C.uid('symmetry'),edges:ids,axis,gap:Math.max(16,Math.min(600,gap)),allowCrossings,enabled:true},d=display(out,new Set(),false,new Set(),{autoSpace:false});symmetry(out,d,config,ids);
+  const config={id:wholeBus?bus.id:wholeCondition?'condition:'+condition.id:C.uid('symmetry'),edges:ids,axis,gap:Math.max(16,Math.min(600,gap)),allowCrossings,avoidObstacles:true,enabled:true},d=display(out,new Set(),false,new Set(),{autoSpace:false});symmetry(out,d,{...config,fit:true},ids);
   const shown=new Map(d.nodes.map(n=>[n.id,n]));for(const n of out.nodes)if(branchIds.includes(n.id)&&!n.locked&&!n.anchorId){const v=shown.get(n.id);if(v){n.x=v.x;n.y=v.y;n.offsetX=n.offsetY=0;}}
   out.symmetrySets=(out.symmetrySets||[]).filter(s=>!s.edges.some(id=>ids.includes(id)));
-  if(wholeBus){const b=out.buses.find(b=>b.id===bus.id);b.symmetry=b.autoAlign=persistent;b.symmetryAxis=axis;b.alignGap=config.gap;b.allowCrossings=allowCrossings;}else if(persistent)out.symmetrySets.push(config);return out;
+  if(wholeBus){const b=out.buses.find(b=>b.id===bus.id);b.symmetry=b.autoAlign=persistent;b.symmetryAxis=axis;b.alignGap=config.gap;b.allowCrossings=allowCrossings;b.avoidObstacles=true;}else if(wholeCondition){const n=out.nodes.find(n=>n.id===condition.id);n.branchSymmetry=persistent;n.branchAxis=axis;n.branchGap=config.gap;n.branchCrossings=allowCrossings;n.branchAvoidObstacles=true;}else if(persistent)out.symmetrySets.push(config);
+  validateSymmetryChange(pg,out,config.id,allowCrossings);
+  return out;
  }
+ function validateSymmetryChange(pg,out,id,allowCrossings){
+  // Accept a constraint only if its compact and expanded projections are safe.
+  // Checking raw coordinates alone misses collisions created by later packing.
+  for(const [compact,autoSpace] of [[false,false],[false,true],[true,false],[true,true]]){const final=display(out,new Set(),compact,new Set(),{autoSpace}),before=display(pg,new Set(),compact,new Set(),{autoSpace}),old=new Set(geometryConflicts(before,!allowCrossings)),conflicts=geometryConflicts(final,!allowCrossings).filter(key=>!old.has(key));
+   if(final.symmetryConflicts?.includes(id)||conflicts.length){const error=Error('Симметрия в этих условиях создаёт наложение блока или связи. Раскладка сохранена; освободите место или измените выбранные ветви.');error.code='SYMMETRY_COLLISION';error.conflicts=conflicts;error.view={compact,autoSpace};throw error;}
+  }
+ }
+ // A setting projects geometry; only the explicit alignment command bakes it.
+ function updateSymmetry(pg,kind,id,patch){const out=C.clone(pg),item=kind==='bus'?out.buses.find(b=>b.id===id):kind==='condition'?out.nodes.find(n=>n.id===id):out.symmetrySets.find(s=>s.id===id);if(!item)throw Error('Настройка симметрии не найдена');if(item.editLocked)throw Error('Снимите защиту элемента');Object.assign(item,patch);
+  if(kind==='condition')item.branchAvoidObstacles=true;else item.avoidObstacles=true;
+  if(kind==='bus')out.symmetrySets=(out.symmetrySets||[]).filter(s=>!s.edges.every(eid=>out.edges.find(e=>e.id===eid)?.bus===id));
+  validateSymmetryChange(pg,out,kind==='condition'?'condition:'+id:id,kind==='condition'?item.branchCrossings:item.allowCrossings);return out;
+ }
+ function geometryConflicts(d,lines=false,bundle=C.bundleRoutes(d)){const ns=d.nodes.filter(n=>n.type!=='summary'),issues=(bundle.symmetryConflicts||[]).map(id=>'route-symmetry:'+id);
+  const byId=new Map(d.nodes.map(n=>[n.id,n]));for(const g of d.symmetryGroups||[]){const es=d.edges.filter(e=>g.edges.includes(e.id)),role=g.role||'target',other=role==='source'?'target':'source',point=(e,r)=>C.endpoint(byId.get(e[r]),e[r+'Port'],r==='source'?'right':'left')[g.axis],terminals=g.heads.map(id=>point(es.find(e=>e[role]===id),role)),opposite=[...new Set(es.map(e=>e[other]))].map(id=>point(es.find(e=>e[other]===id),other)),centre=opposite.length===1?es.reduce((s,e)=>s+point(e,other),0)/es.length:(Math.min(...opposite)+Math.max(...opposite))/2,steps=terminals.slice(1).map((v,i)=>v-terminals[i]);if(Math.abs((Math.min(...terminals)+Math.max(...terminals))/2-centre)>.01||steps.some(v=>v<-.01)||steps.length&&Math.max(...steps)-Math.min(...steps)>.01)issues.push('symmetry:'+g.id);}
+  for(let i=0;i<ns.length;i++)for(let j=i+1;j<ns.length;j++){const a=ns[i],b=ns[j];if(a.anchorId===b.id||b.anchorId===a.id)continue;if(a.x<b.x+b.w-.5&&a.x+a.w>b.x+.5&&a.y<b.y+b.h-.5&&a.y+a.h>b.y+.5)issues.push('blocks:'+ [a.id,b.id].sort().join('|'));}
+  for(const e of d.edges){if(e.bus||e.proxy)continue;const points=bundle.routes.get(e.id)?.points||[];for(const n of ns)if(n.id!==e.source&&n.id!==e.target&&n.anchorId!==e.source&&n.anchorId!==e.target&&points.slice(1).some((v,i)=>C.segmentBox(points[i],v,n)))issues.push('line-block:'+e.id+'|'+n.id);}
+  if(lines){const paths=d.edges.filter(e=>!e.bus&&!e.proxy).map(e=>({e,points:bundle.routes.get(e.id)?.points||[]}));for(let i=0;i<paths.length;i++)for(let j=i+1;j<paths.length;j++){const a=paths[i],b=paths[j],common=[a.e.source,a.e.target].some(id=>id===b.e.source||id===b.e.target);let hit=false;
+   for(let k=1;k<a.points.length&&!hit;k++)for(let l=1;l<b.points.length&&!hit;l++){const p=C.routeIntersection(a.points[k-1],a.points[k],b.points[l-1],b.points[l]);if(!p)continue;if(common&&C.commonRouteJunction(a.points,b.points,p))continue;hit=true;}
+   if(hit)issues.push('lines:'+ [a.e.id,b.e.id].sort().join('|'));}}
+  return issues;
+ }
+ function routeEditAllowed(d,id,candidate,beforeIssues){const after={...d,edges:d.edges.map(e=>e.id===id?candidate:e)},ns=new Map(d.nodes.map(n=>[n.id,n])),requested=C.edgePath(candidate,ns),actual=C.bundleRoutes(after).routes.get(id);
+  if(!requested||!actual||(candidate.manualRoute?.length||candidate.waypoints?.length)&&(requested.points.length!==actual.points.length||requested.points.some((p,i)=>Math.hypot(p.x-actual.points[i].x,p.y-actual.points[i].y)>.01)))return false;
+  const lines=!(d.symmetryGroups||[]).some(g=>g.allowCrossings&&g.edges?.includes(id)),old=beforeIssues||new Set(geometryConflicts(d,lines));return !geometryConflicts(after,lines).some(key=>!old.has(key));
+ }
+ function busGeometryConflicts(d,id){const bundle=C.bundleRoutes(d),bus=bundle.buses.find(b=>b.id===id),saved=d.buses.find(b=>b.id===id);if(!bus)return [];const edges=d.edges.filter(e=>e.bus===id),paths=[{points:bus.trunk.points},...(bus.segments||[]),...(bus.mode==='free'?[]:[{points:bus.lead.points,node:bus.hubId},...edges.map(e=>({...bundle.routes.get(e.id),node:bus.mode==='in'?e.source:e.target}))])],issues=[];
+  for(const path of paths)for(const n of d.nodes)if(n.id!==path.node&&(!path.node||n.anchorId!==path.node)&&n.type!=='summary'&&path.points.slice(1).some((p,i)=>C.segmentBox(path.points[i],p,n)))issues.push('bus-block:'+id+'|'+n.id);
+  if(saved?.allowCrossings!==true)for(const path of paths)for(const e of d.edges.filter(e=>!e.bus&&!e.proxy)){const other=bundle.routes.get(e.id);if(!other)continue;let hit=false;for(let i=1;i<path.points.length&&!hit;i++)for(let j=1;j<other.points.length&&!hit;j++){const p=C.routeIntersection(path.points[i-1],path.points[i],other.points[j-1],other.points[j]);if(p&&!([path.points[0],path.points.at(-1)].some(a=>[other.points[0],other.points.at(-1)].some(b=>Math.hypot(a.x-b.x,a.y-b.y)<.01&&Math.hypot(a.x-p.x,a.y-p.y)<.01))))hit=true;}if(hit)issues.push('bus-line:'+id+'|'+e.id);}
+  return issues;
+ }
+ function busEditAllowed(d,id,axis,beforeIssues){const after={...d,buses:d.buses.map(b=>b.id===id?{...b,axis}:b)},before=beforeIssues||new Set(busGeometryConflicts(d,id));return !busGeometryConflicts(after,id).some(key=>!before.has(key));}
  function normalizeV6(p){prev.normalizeV6(p);for(const pg of p.pages){pg.symmetrySets=(pg.symmetrySets||[]).filter(set=>{const es=pg.edges.filter(e=>set.edges.includes(e.id)),b=es.length&&es.every(e=>e.bus&&e.bus===es[0].bus)&&pg.buses.find(b=>b.id===es[0].bus);if(b&&pg.edges.filter(e=>e.bus===b.id).length===es.length){b.symmetry=b.autoAlign=set.enabled!==false;b.alignGap=set.gap||b.alignGap;b.symmetryAxis=set.axis;b.allowCrossings=set.allowCrossings===true;return false;}return true;});}return p;}
  function convertNode(pg,id,type){if(!['block','decision','comment'].includes(type))throw Error('Выберите блок, условие или комментарий');const out=C.clone(pg),n=out.nodes.find(n=>n.id===id);if(!n||!['block','decision','comment','note'].includes(n.type)||n.table)throw Error('Таблица и изображение сохраняют свой тип');if(n.editLocked)throw Error('Блок защищён от правки');n.type=type;return out;}
  function releaseSymmetry(pg,id,kind='set'){const out=C.clone(pg),d=display(pg,new Set(),false,new Set(),{autoSpace:false}),groups=d.symmetryGroups.filter(g=>kind==='bus'?g.bus===id:kind==='condition'?g.id==='condition:'+id:g.id===id),heads=[...new Set(groups.flatMap(g=>g.heads))],ids=new Set(branches(pg,heads,new Set(groups.map(g=>g.parent).filter(Boolean))).flatMap(b=>[...b.ids])),shown=new Map(d.nodes.map(n=>[n.id,n]));
@@ -1434,5 +1647,5 @@ Core.deleteSelection=function(pg,selection){
   }return out;
  }
  const labelPlacement=(edge,route)=>{const p=prev.labelPlacement(edge,route);return {...p,x:p.x+(edge.labelOffsetX||0),y:p.y+(edge.labelOffsetY||0)};};
- Object.assign(C,{display,dragPlan,prepareMove,moveNodes,setEdgeSymmetry,releaseSymmetry,coupledRoots,expandedFolds,normalizeV6,convertNode,bulkPatch,labelPlacement});
+ Object.assign(C,{display,dragPlan,prepareMove,moveNodes,setEdgeSymmetry,updateSymmetry,releaseSymmetry,coupledRoots,expandedFolds,normalizeV6,convertNode,bulkPatch,labelPlacement,geometryConflicts,routeEditAllowed,busGeometryConflicts,busEditAllowed});
 })(Core);
