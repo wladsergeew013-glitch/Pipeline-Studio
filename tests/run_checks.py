@@ -4,7 +4,7 @@ import subprocess,sys
 B=Path(__file__).resolve().parents[1]
 (B/'qa').mkdir(exist_ok=True)
 subprocess.run([sys.executable,'build_portable.py'],cwd=B,check=True)
-for name in ('test_v02.js','test_v05.js','test_v07.js','test_v072.js','test_v073.js','test_v074.js','test_v075.js','test_v076.js','test_workflows.js','test_adaptive_views.js','test_scoped_symmetry.js'):
+for name in ('test_v02.js','test_v05.js','test_v07.js','test_v072.js','test_v073.js','test_v074.js','test_v075.js','test_v076.js','test_workflows.js','test_adaptive_views.js','test_scoped_symmetry.js','test_symmetry_obstacles.js','test_interaction_safety.js','test_pipeline_spacing.js','test_shared_symmetry.js','test_paired_routes.js'):
     subprocess.run(['node',str(B/'tests'/name)],cwd=B,check=True)
 subprocess.run(['node',str(B/'tests/test_working_document.js')],cwd=B,check=True)
 subprocess.run([sys.executable,str(B/'tests/test_server.py')],cwd=B,check=True)
@@ -20,8 +20,13 @@ if '--browser' in sys.argv:
     subprocess.run(['node',str(B/'tests/browser_v076.js')],cwd=B,check=True)
     subprocess.run(['node',str(B/'tests/browser_workflows.js')],cwd=B,check=True)
     subprocess.run(['node',str(B/'tests/browser_status_capsules.js')],cwd=B,check=True)
+    subprocess.run(['node',str(B/'tests/browser_view_anchors.js')],cwd=B,check=True)
     subprocess.run(['node',str(B/'tests/browser_adaptive_views.js')],cwd=B,check=True)
     subprocess.run(['node',str(B/'tests/browser_zoom_and_drag.js')],cwd=B,check=True)
+    subprocess.run(['node',str(B/'tests/browser_symmetry_lab.js')],cwd=B,check=True)
+    subprocess.run(['node',str(B/'tests/browser_interaction_sequences.js')],cwd=B,check=True)
+    subprocess.run(['node',str(B/'tests/browser_render_spacing.js')],cwd=B,check=True)
+    subprocess.run(['node',str(B/'tests/browser_shared_symmetry.js')],cwd=B,check=True)
 if '--materials' in sys.argv:
     subprocess.run([sys.executable,str(B/'tests/make_material_samples.py')],cwd=B,check=True)
     subprocess.run(['node',str(B/'tests/browser_materials.js')],cwd=B,check=True)
