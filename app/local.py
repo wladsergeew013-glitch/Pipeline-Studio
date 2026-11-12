@@ -49,6 +49,13 @@ class LocalFiles:
             temp=self.state.with_suffix('.tmp');temp.write_text(json.dumps({'files':sorted(self.grants),'folders':sorted(self.folders),'signingKey':self.signing_key},ensure_ascii=False),encoding='utf-8');os.replace(temp,self.state)
         return p
     def resolve(self,data):
+        rel=data.get('path') or '';doc=data.get('documentPath')
+        if doc and isinstance(rel,str) and rel and not Path(rel).is_absolute():
+            parent=Path(doc).resolve().parent
+            if str(parent) in self.folders:
+                relative=(parent/rel).resolve()
+                with self.lock:permitted=str(relative) in self.grants or any(relative.is_relative_to(Path(folder).resolve()) for folder in self.folders)
+                if permitted and relative.is_file() and relative.suffix.lower() in EXTENSIONS:return relative
         raw=data.get('nativePath') or ''
         if raw:
             if not Path(raw).is_absolute():raise ValueError('Нужен полный путь к исходному файлу')

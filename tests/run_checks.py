@@ -4,14 +4,16 @@ import subprocess,sys
 B=Path(__file__).resolve().parents[1]
 (B/'qa').mkdir(exist_ok=True)
 subprocess.run([sys.executable,'build_portable.py'],cwd=B,check=True)
-for name in ('test_v02.js','test_v05.js','test_v07.js','test_v072.js','test_v073.js','test_v074.js','test_v075.js','test_v076.js','test_workflows.js','test_adaptive_views.js','test_scoped_symmetry.js','test_symmetry_obstacles.js','test_interaction_safety.js','test_pipeline_spacing.js','test_shared_symmetry.js','test_paired_routes.js'):
+for name in ('test_v02.js','test_v05.js','test_v07.js','test_v072.js','test_v073.js','test_v074.js','test_v075.js','test_v076.js','test_workflows.js','test_adaptive_views.js','test_scoped_symmetry.js','test_symmetry_obstacles.js','test_interaction_safety.js','test_pipeline_spacing.js','test_shared_symmetry.js','test_paired_routes.js','test_review_regressions.js'):
     subprocess.run(['node',str(B/'tests'/name)],cwd=B,check=True)
 subprocess.run(['node',str(B/'tests/test_working_document.js')],cwd=B,check=True)
 subprocess.run([sys.executable,str(B/'tests/test_server.py')],cwd=B,check=True)
+subprocess.run([sys.executable,str(B/'tests/test_review_server.py')],cwd=B,check=True)
 subprocess.run([sys.executable,str(B/'tests/test_local.py')],cwd=B,check=True)
 subprocess.run(['node',str(B/'tests/test_desktop_files.js')],cwd=B,check=True)
 subprocess.run(['node',str(B/'tests/test_editor_origin.js')],cwd=B,check=True)
 if '--browser' in sys.argv:
+    subprocess.run(['node',str(B/'tests/browser_review_regressions.js')],cwd=B,check=True)
     subprocess.run(['node',str(B/'tests/browser_legacy_notes.js')],cwd=B,check=True)
     subprocess.run(['node',str(B/'tests/browser_v072.js')],cwd=B,check=True)
     subprocess.run(['node',str(B/'tests/browser_v073.js')],cwd=B,check=True)
@@ -33,6 +35,7 @@ if '--materials' in sys.argv:
     subprocess.run(['node',str(B/'tests/browser_source_editor.js')],cwd=B,check=True)
     subprocess.run(['node',str(B/'tests/browser_local_materials.js')],cwd=B,check=True)
 if '--desktop' in sys.argv:
+    subprocess.run(['node',str(B/'tests/browser_review_desktop.js')],cwd=B,check=True)
     subprocess.run(['node',str(B/'tests/browser_desktop.js')],cwd=B,check=True)
     subprocess.run(['node',str(B/'tests/browser_portable_transfer.js')],cwd=B,check=True)
 print('All requested checks passed.')

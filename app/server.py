@@ -31,8 +31,27 @@ def initialize():
         seed=load(BASE/'data'/'seed.json');write(DATA/'project.json',seed);write(DATA/'materials.json',seed['materials'])
     if not (DATA/'materials.json').exists():write(DATA/'materials.json',[])
 
+def asset_path(asset):
+    if not isinstance(asset,str) or not re.fullmatch(r'[a-f0-9]{32}(?:-preview)?',asset):raise ValueError('Некорректный ID файла')
+    target=(ASSETS/asset).resolve()
+    if not target.is_relative_to(ASSETS.resolve()):raise ValueError('Файл вне каталога вложений')
+    return target
+
+def check_materials(mats):
+    if not isinstance(mats,list):raise ValueError('Ожидается реестр материалов')
+    ids=set()
+    for m in mats:
+        if not isinstance(m,dict) or not isinstance(m.get('id'),str) or not m['id']:raise ValueError('Некорректный ID материала')
+        if m['id'] in ids:raise ValueError('Повтор ID материала')
+        ids.add(m['id'])
+        for key in ('asset','previewAsset'):
+            value=m.get(key)
+            if value is not None and value!='':asset_path(value)
+    return mats
+
 def check_project(obj):
     if not isinstance(obj,dict) or obj.get('format')!='pipeline-studio':raise ValueError('Неизвестный формат проекта')
+    if obj.get('materials') is not None:check_materials(obj['materials'])
     if not isinstance(obj.get('pages'),list) or not obj['pages']:raise ValueError('Нужна хотя бы одна страница')
     ids=set()
     for p in obj['pages']:
@@ -101,10 +120,12 @@ def used_materials(project):
 class Handler(BaseHTTPRequestHandler):
     server_version='PipelineStudio/0.7'
     def log_message(self,fmt,*args): print('%s %s'%(self.log_date_time_string(),fmt%args))
+    def session_token(self):
+        cookie=dict(s.strip().split('=',1) for s in self.headers.get('Cookie','').split(';') if '=' in s)
+        return cookie.get('studio','')
     def role(self):
         if not PASSWORD:return 'editor'
-        cookie=dict(s.strip().split('=',1) for s in self.headers.get('Cookie','').split(';') if '=' in s)
-        session=SESSIONS.get(cookie.get('studio',''))
+        with LOCK:session=SESSIONS.get(self.session_token())
         return session[0] if session and session[1]>time.time() else None
     def need(self,editor=False):
         role=self.role()
@@ -181,7 +202,9 @@ class Handler(BaseHTTPRequestHandler):
             mat=next((m for m in mats if aid in (m.get('asset'),m.get('previewAsset'))),None)
             if not mat:return self.json({'error':'Материал не найден'},404)
             mime='application/pdf' if aid==mat.get('previewAsset') else mat.get('mime','application/octet-stream')
-            return self.file(ASSETS/aid,mime,mat.get('filename','file'),download=('download' in q))
+            try:target=asset_path(aid)
+            except ValueError:return self.json({'error':'Файл не найден'},404)
+            return self.file(target,mime,mat.get('filename','file'),download=('download' in q))
         if path.startswith('/api/'):return self.json({'error':'Неизвестный API'},404)
         if path=='/':path='/index.html'
         static=(BASE/'static'/path.lstrip('/')).resolve()
@@ -224,9 +247,12 @@ class Handler(BaseHTTPRequestHandler):
                 if PASSWORD and hmac.compare_digest(password.encode(),PASSWORD.encode()):role='editor'
                 elif READER and hmac.compare_digest(password.encode(),READER.encode()):role='reader'
                 if not role:time.sleep(.5);return self.json({'error':'Неверный пароль'},401)
-                token=secrets.token_urlsafe(32);SESSIONS[token]=(role,time.time()+12*3600)
+                token=secrets.token_urlsafe(32)
+                with LOCK:SESSIONS[token]=(role,time.time()+12*3600)
                 return self.json({'role':role},headers={'Set-Cookie':f'studio={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200'+('; Secure' if os.environ.get('STUDIO_SECURE_COOKIE')=='1' else '')})
-            if path=='/api/logout':return self.json({'ok':True},headers={'Set-Cookie':'studio=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'})
+            if path=='/api/logout':
+                with LOCK:SESSIONS.pop(self.session_token(),None)
+                return self.json({'ok':True},headers={'Set-Cookie':'studio=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'})
             if not self.need(True):return
             if path=='/api/project' and method=='PUT':
                 p=check_project(json.loads(self.body()))
@@ -254,15 +280,10 @@ class Handler(BaseHTTPRequestHandler):
             if path=='/api/import':
                 p=import_drawio(self.body(20*1024*1024));return self.json(p)
             if path=='/api/materials' and method=='PUT':
-                mats=json.loads(self.body())
-                if not isinstance(mats,list):raise ValueError('Ожидается реестр материалов')
-                ids=[m['id'] for m in mats]
-                if len(set(ids))!=len(ids):raise ValueError('Повтор ID материала')
+                mats=check_materials(json.loads(self.body()))
                 for m in mats:
                     link=m.get('url','')
                     if link and not (link.startswith(('https://','http://','data:page/id,'))):raise ValueError('Разрешены HTTP/HTTPS-ссылки или внутренние страницы')
-                    for key in ('asset','previewAsset'):
-                        if m.get(key) and not re.fullmatch('[a-f0-9]{32}(?:-preview)?',m[key]):raise ValueError('Некорректный ID файла')
                 with LOCK:
                     current={m['id']:m for m in load(DATA/'materials.json',[])}
                     for m in mats:
@@ -302,8 +323,10 @@ class Handler(BaseHTTPRequestHandler):
                     write(DATA/'materials.json',mats)
                 return self.json(mat)
             if path.startswith('/api/preview/'):
-                mid=path.rsplit('/',1)[1];mats=load(DATA/'materials.json',[]);mat=next((m for m in mats if m['id']==mid),None)
+                mid=path.rsplit('/',1)[1]
+                with LOCK:mat=next((m for m in load(DATA/'materials.json',[]) if m['id']==mid),None)
                 if not mat or not mat.get('asset'):raise ValueError('Сначала загрузите файл')
+                source_asset=mat['asset'];source_version=mat.get('version',1);source=asset_path(source_asset)
                 ext=Path(mat['filename']).suffix.lower()
                 if ext not in ('.doc','.docx','.ppt','.pptx','.odt','.odp','.rtf'):raise ValueError('Этот формат не конвертируется')
                 exe=shutil.which('libreoffice') or shutil.which('soffice')
@@ -312,17 +335,17 @@ class Handler(BaseHTTPRequestHandler):
                         if Path(pp).exists():exe=pp;break
                 if not exe:return self.json({'error':'Для превью Word/PowerPoint установите LibreOffice или прикрепите PDF-превью вручную.'},422)
                 with tempfile.TemporaryDirectory() as td:
-                    work=Path(td);src=work/('input'+ext);shutil.copyfile(ASSETS/mat['asset'],src)
+                    work=Path(td);src=work/('input'+ext);shutil.copyfile(source,src)
                     profile=(work/'profile').as_uri()
                     subprocess.run([exe,'-env:UserInstallation='+profile,'--headless','--convert-to','pdf','--outdir',td,str(src)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=90,check=True)
                     pdf=work/'input.pdf'
                     if not pdf.exists():raise ValueError('Конвертер не создал PDF')
-                    preview=mat['asset']+'-preview';shutil.copyfile(pdf,ASSETS/preview)
-                with LOCK:
-                    mats=load(DATA/'materials.json',[])
-                    for m in mats:
-                        if m['id']==mid:m['previewAsset']=preview;m['version']=m.get('version',1)+1;mat=m
-                    write(DATA/'materials.json',mats)
+                    with LOCK:
+                        mats=load(DATA/'materials.json',[]);current=next((m for m in mats if m['id']==mid),None)
+                        if not current or current.get('asset')!=source_asset or current.get('version',1)!=source_version:return self.json({'error':'Оригинал изменён во время конвертации. Повторите создание превью.'},409)
+                        preview=uuid.uuid4().hex+'-preview';target=asset_path(preview);shutil.copyfile(pdf,target)
+                        current['previewAsset']=preview;current['version']=source_version+1;mat=current
+                        write(DATA/'materials.json',mats)
                 return self.json(mat)
             if path=='/api/publish':
                 with LOCK:

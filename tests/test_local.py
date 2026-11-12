@@ -61,4 +61,13 @@ class LocalTests(unittest.TestCase):
     def test_25_streamed_html_cannot_execute_as_editor(self):
         self.file=self.root/'source.html';self.file.write_text('<script>alert(1)</script>');code,headers,body=self.content();self.assertEqual(code,200);self.assertIn('sandbox',headers['Content-Security-Policy']);self.assertIn(b'<script>',body)
 
+    def test_26_moved_document_prefers_relative_source_over_existing_original(self):
+        folder=Path(self.tmp.name)/'recipient';folder.mkdir();doc=folder/'Process.html';doc.write_text('document')
+        materials=folder/'materials';materials.mkdir();source=materials/'Original.docx';source.write_bytes(b'recipient')
+        self.picked=doc;self.command('pick-document',{})
+        meta=self.command('stat',{'path':'materials/Original.docx','nativePath':str(self.file),'documentPath':str(doc)})[1]
+        self.assertEqual(meta['nativePath'],str(source));source.unlink()
+        meta=self.command('stat',{'path':'materials/Original.docx','nativePath':str(self.file),'documentPath':str(doc)})[1]
+        self.assertEqual(meta['nativePath'],str(self.file))
+
 if __name__=='__main__':unittest.main(verbosity=2)

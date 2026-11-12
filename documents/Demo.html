@@ -835,7 +835,7 @@ function display(pg,collapsed=new Set(),compact=true,folded=new Set(),options={}
 function materializeLayout(pg,d){
  if(!d.layoutOffsets)return prior.materializeLayout(pg,d);
  const p=C.clone(pg),shown=new Map(d.nodes.map(n=>[n.id,n]));
- for(const n of p.nodes){if(n.anchorId||n.locked)continue;const v=shown.get(n.id),delta=d.layoutOffsets.get(n.id)||{x:0,y:0};n.x=v?v.x:n.x+(n.offsetX||0)+delta.x;n.y=v?v.y:n.y+(n.offsetY||0)+delta.y;n.offsetX=n.offsetY=0;}
+  for(const n of p.nodes){if(n.anchorId||n.locked)continue;const v=shown.get(n.id),delta=d.layoutOffsets.get(n.id)||d.layoutOffsets.get(d.hiddenOwner?.get(n.id))||{x:0,y:0};n.x=v?v.x:n.x+(n.offsetX||0)+delta.x;n.y=v?v.y:n.y+(n.offsetY||0)+delta.y;n.offsetX=n.offsetY=0;}
  return p;
 }
 function movementSet(pg,selected,options={}){
@@ -1467,7 +1467,8 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
 /* Deletion keeps protected objects and their required endpoints intact. */
 Core.deleteSelection=function(pg,selection){
  const nodes=new Set(selection.node||[]),edges=new Set(selection.edge||[]),drawings=new Set(selection.drawing||[]),buses=new Set(selection.bus||[]);
- for(const n of pg.nodes)if(n.editLocked)nodes.delete(n.id);
+ const byId=new Map(pg.nodes.map(n=>[n.id,n]));
+ for(const n of pg.nodes)if(n.editLocked){nodes.delete(n.id);const seen=new Set([n.id]);let host=byId.get(n.anchorId);while(host&&!seen.has(host.id)){nodes.delete(host.id);seen.add(host.id);host=byId.get(host.anchorId);}}
  for(const e of pg.edges)if(e.editLocked){nodes.delete(e.source);nodes.delete(e.target);edges.delete(e.id);buses.delete(e.bus);}
  for(const d of pg.drawings||[])if(d.editLocked){nodes.delete(d.anchor);drawings.delete(d.id);}
  for(const b of pg.buses||[])if(b.editLocked){buses.delete(b.id);for(const e of pg.edges.filter(e=>e.bus===b.id)){edges.delete(e.id);nodes.delete(e.source);nodes.delete(e.target);}}
@@ -1479,6 +1480,18 @@ Core.deleteSelection=function(pg,selection){
  C.arrange=(pg,ids,mode)=>arrange(pg,ids.filter(id=>!pg.nodes.find(n=>n.id===id)?.editLocked),mode);
  C.autoLayout=(pg,group)=>{const model={...pg,edges:pg.edges.map(e=>{const r=C.edgeRelationship(pg,e);return r?{...e,source:r.parent,target:r.child}:null}).filter(Boolean)},out=autoLayout(model,group);out.edges=C.clone(pg.edges);for(let i=0;i<out.nodes.length;i++)if(pg.nodes[i].editLocked)out.nodes[i]=C.clone(pg.nodes[i]);return out;};
 })(Core);
+/* A duplicated subgraph owns its combs and symmetry constraints. A partial
+   comb with one copied connection becomes an independent connection. */
+Core.duplicateSelection=function(pg,selection){
+ const out=Core.clone(pg),wanted=new Set(selection),copies=pg.nodes.filter(n=>wanted.has(n.id)).map(Core.clone),ids=new Map(copies.map(n=>[n.id,Core.uid('node')])),edgeIds=new Map(),busIds=new Map(),byId=new Map(pg.nodes.map(n=>[n.id,n]));
+ const effective=(n,seen=new Set())=>{if(!n||seen.has(n.id))return {x:0,y:0};seen.add(n.id);const host=byId.get(n.anchorId);if(host){const p=effective(host,seen);return {x:p.x+(n.anchorX||0),y:p.y+(n.anchorY||0)};}return {x:n.x+(n.offsetX||0),y:n.y+(n.offsetY||0)};};
+ for(const cp of copies){const old=cp.id;cp.id=ids.get(old);if(ids.has(cp.anchorId))cp.anchorId=ids.get(cp.anchorId);else{if(cp.anchorId){const visible=effective(byId.get(old));cp.x=visible.x;cp.y=visible.y;cp.offsetX=cp.offsetY=0;}cp.anchorId=null;}cp.offsetX=(cp.offsetX||0)+38;cp.offsetY=(cp.offsetY||0)+38;out.nodes.push(cp);out.groups?.forEach(g=>{if(g.members.includes(old))g.members.push(cp.id);});}
+ const edges=pg.edges.filter(e=>ids.has(e.source)&&ids.has(e.target)).map(e=>{const id=Core.uid('edge');edgeIds.set(e.id,id);return {...Core.clone(e),id,source:ids.get(e.source),target:ids.get(e.target)};});
+ for(const bus of pg.buses||[]){const members=edges.filter(e=>e.bus===bus.id);if(members.length<2)continue;const copy=Core.clone(bus);copy.id=Core.uid('bus');if(ids.has(bus.hub))copy.hub=ids.get(bus.hub);else{delete copy.hub;copy.mode='free';}busIds.set(bus.id,copy.id);(out.buses||=[]).push(copy);}
+ for(const e of edges){if(busIds.has(e.bus))e.bus=busIds.get(e.bus);else delete e.bus;}out.edges.push(...edges);
+ for(const set of pg.symmetrySets||[]){const members=(set.edges||[]).filter(id=>edgeIds.has(id)).map(id=>edgeIds.get(id));if(members.length>=2)(out.symmetrySets||=[]).push({...Core.clone(set),id:Core.uid('symmetry'),edges:members});}
+ return {page:out,ids:copies.map(n=>n.id)};
+};
 /* Routes belonging to a non-crossing symmetry constraint share a routing
    context. Independent row links must not silently become one overlapping
    spine, and a long connector must avoid every visible workflow block. */
@@ -1957,7 +1970,7 @@ Core.deleteSelection=function(pg,selection){
  const labelPlacement=(edge,route)=>{const p=prev.labelPlacement(edge,route);return {...p,x:p.x+(edge.labelOffsetX||0),y:p.y+(edge.labelOffsetY||0)};};
  Object.assign(C,{display,dragPlan,prepareMove,moveNodes,setEdgeSymmetry,updateSymmetry,releaseSymmetry,coupledRoots,expandedFolds,normalizeV6,convertNode,bulkPatch,labelPlacement,geometryConflicts,routeEditAllowed,busGeometryConflicts,busEditAllowed});
 })(Core);
-</script><script id="app-source">/* Pipeline Studio 0.7.17 — browser editor and publication viewer.
+</script><script id="app-source">/* Pipeline Studio 0.7.18 — browser editor and publication viewer.
    No external scripts, fonts, analytics or cloud viewers are loaded.
    Persistence is either the local Python server, or IndexedDB in portable mode. */
 'use strict';
@@ -2145,7 +2158,7 @@ async function legacyAction(a){
  if(a==='server-backup'){await save();downloadURL('/api/backup','pipeline-backup.zip');return;}
  if(a==='print')return printDialog();if(a==='report')return importReport();
  if(a==='delete'){if(S.readOnly)return;if(S.selectedDrawing){change(()=>{page().drawings=page().drawings.filter(s=>s.id!==S.selectedDrawing);S.selectedDrawing=null;S.selectedDrawings?.clear();S.selectedBuses?.clear();});return;}if(S.selectedEdge){change(()=>{page().edges=page().edges.filter(e=>e.id!==S.selectedEdge);S.selectedEdge=null;});return;}if(!S.selected.size)return;confirmDialog('Удалить выделение?',`Блоков: ${S.selected.size}. Связанные линии также будут удалены. Самих материалов это не удалит.`,()=>change(()=>{const ids=new Set(S.selected);for(const v of page().nodes)if(ids.has(v.anchorId))ids.add(v.id);page().nodes=page().nodes.filter(v=>!ids.has(v.id));page().edges=page().edges.filter(e=>!ids.has(e.source)&&!ids.has(e.target));page().groups.forEach(g=>g.members=g.members.filter(id=>!ids.has(id)));page().drawings=page().drawings.filter(s=>!ids.has(s.anchor));S.selected.clear();}));return;}
- if(a==='duplicate'&&S.selected.size){change(()=>{const copies=page().nodes.filter(n=>S.selected.has(n.id)).map(C.clone),ids=new Map(copies.map(n=>[n.id,C.uid('node')]));for(const cp of copies){const old=cp.id;cp.id=ids.get(old);cp.offsetX=(cp.offsetX||0)+38;cp.offsetY=(cp.offsetY||0)+38;if(ids.has(cp.anchorId))cp.anchorId=ids.get(cp.anchorId);else{cp.anchorId=null;}page().nodes.push(cp);page().groups.forEach(g=>{if(g.members.includes(old))g.members.push(cp.id);});}for(const e of [...page().edges])if(ids.has(e.source)&&ids.has(e.target))page().edges.push({...C.clone(e),id:C.uid('edge'),source:ids.get(e.source),target:ids.get(e.target)});S.selected=new Set(copies.map(n=>n.id));});return;}
+ if(a==='duplicate'&&S.selected.size){change(()=>{const result=C.duplicateSelection(page(),S.selected);S.project.pages[S.pageIndex]=result.page;S.selected=new Set(result.ids);});return;}
  if(a==='group'&&S.selected.size){
   const ids=page().nodes.filter(n=>S.selected.has(n.id)&&!n.anchorId).map(n=>n.id);if(!ids.length)return toast('Выберите текстовый блок или самостоятельный этап');
   const h=C.hierarchy(page()),owners=new Set(ids.map(id=>h.owner.get(id)||null)),parentId=owners.size===1?[...owners][0]:null;
@@ -2415,7 +2428,9 @@ function groupEditor(id){
 }
 function legacyArrangeButtons(){return `<div class="arrange-panel"><small>Выровнять блоки</small><div class="grid3">${[['left','По левому краю','⇤'],['center','Центры по горизонтали','↔'],['right','По правому краю','⇥'],['top','По верхнему краю','⤒'],['middle','Центры по вертикали','↕'],['bottom','По нижнему краю','⤓']].map(([id,title,symbol])=>button('arrange-'+id,title,symbol)).join('')}</div><div class="row">${button('arrange-horizontal','Равные горизонтальные промежутки','⇹')}${button('arrange-vertical','Равные вертикальные промежутки','⇵')}<small>Распределить</small></div><small>Уплотнённый вид будет зафиксирован для точного размещения.</small></div>`;}
 function arrangeSelection(mode){
- if(S.readOnly)return;const p=S.compact?C.materializeLayout(page(),S.display):page(),result=C.arrange(p,[...S.selected],mode);change(()=>{S.project.pages[S.pageIndex]=result;S.compact=false;});
+ if(S.readOnly)return;const p=S.compact?C.materializeLayout(page(),S.display):page(),result=C.arrange(p,[...S.selected],mode),before=new Map(p.nodes.map(n=>[n.id,n])),after=new Map(result.nodes.map(n=>[n.id,n]));
+ for(const [id,owner] of S.display?.hiddenOwner||[]){const n=after.get(id),a=before.get(owner),b=after.get(owner);if(n&&!n.locked&&!n.anchorId&&a&&b){n.x+=b.x-a.x+(b.offsetX||0)-(a.offsetX||0);n.y+=b.y-a.y+(b.offsetY||0)-(a.offsetY||0);}}
+ change(()=>{S.project.pages[S.pageIndex]=result;S.compact=false;});
 }
 function legacyNudge(key,step){
  if(S.readOnly)return;const dx=key==='ArrowLeft'?-step:key==='ArrowRight'?step:0,dy=key==='ArrowUp'?-step:key==='ArrowDown'?step:0;
@@ -2456,7 +2471,7 @@ function legacyBulkRelink(){
 
 /* 0.3: The editor is an application. A document and its referenced files are separate.
    All filesystem access is explicitly granted by the user; imported HTML is parsed, never run. */
-const RELEASE='0.7.17';
+const RELEASE='0.7.18';
 function desktopAvailable(){return typeof window.STUDIO_DESKTOP?.call==='function';}
 function nativeAvailable(){return desktopAvailable()||!!window.STUDIO_NATIVE?.token&&location.hostname==='127.0.0.1';}
 async function nativeCall(route,data={}){if(desktopAvailable())return window.STUDIO_DESKTOP.call(route,data);if(!nativeAvailable())throw Error('Открытие оригинала доступно в Pipeline Studio.exe');const response=await fetch('/native/'+route,{method:'POST',headers:{'Content-Type':'application/json','X-Studio-Token':window.STUDIO_NATIVE.token},body:JSON.stringify(data),cache:'no-store'});const result=await response.json();if(!response.ok)throw Error(result.error||'Не удалось обратиться к исходному файлу');return result;}
@@ -2496,7 +2511,7 @@ async function save(){
 }
 function normalize(p){const was=p?.schemaVersion||1;const out=legacyNormalize(p);out.schemaVersion=was;C.normalizeV6(out);for(const pg of out.pages){for(const n of pg.nodes)if(n.table)C.validateTable(n.table);}return out;}
 function collapsed(){if(!S.project)return new Set();const p=page();if(!S.collapsed[p.id])S.collapsed[p.id]=new Set(p.collapseMode==='groups'?p.groups.map(g=>g.id):p.nodes.filter(n=>n.collapsible).map(n=>n.id));return S.collapsed[p.id];}
-async function activateDocument(project,{name='',handle=null,key=null,server=false,readOnly=false,direct=false,nativePath='',nativeDigest=''}={}){
+async function activateDocument(project,{name='',handle=null,key=null,server=false,readOnly=false,direct=false,nativePath='',nativeDigest='',fileDirty=false}={}){
  if(S.dirty&&!S.readOnly)await save();
  closeFilePopover();closeNodeStatus();finishEdgeLabel(false);closeModal();clearTimeout(saveTimer);for(const u of DOC.urls.values())URL.revokeObjectURL(u);
  DOC={key:key||C.uid('doc'),name,handle,root:null,files:new Map(),sessionFiles:new Map(),urls:new Map(),direct,exportedAt:0};
@@ -2504,7 +2519,7 @@ async function activateDocument(project,{name='',handle=null,key=null,server=fal
  S.project=normalize(C.clone(project));S.server=server;S.readOnly=readOnly;S.locked=readOnly;S.home=false;S.view={x:60,y:60,z:1};S.pageIndex=Math.max(0,Math.min(S.project.pages.length-1,S.project.viewState?.page||0));
  S.history=[];S.redo=[];S.selected=new Set();S.selectedEdges=new Set();S.selectedEdge=S.selectedBus=S.selectedDrawing=null;S.selectedDrawings?.clear();S.selectedBuses?.clear();S.pendingPort=null;S.addingBus=null;S.materialChecks=new Map();S.popover=null;S.guides=[];S.iconEdit=false;S.placement=null;S.addingBusPair=null;S.search='';S.folded=new Set();S.collapsed={};S.tool='select';S.quickCell=null;quickEdit=null;S.connectionCycle=null;if(S.propertyPainter)S.propertyPainter.source=null;
  for(const [k,v] of Object.entries(S.project.viewState?.collapsed||{}))S.collapsed[k]=new Set(v);
- S.collapsedRows={};S.rowControls={};for(const [k,v] of Object.entries(S.project.viewState?.collapsedRows||{}))S.collapsedRows[k]=new Set(v);if(readOnly){const pref=await dbGet('reader-rows:'+S.project.id);if(pref){S.rowControls=pref.controls||{};for(const [k,v] of Object.entries(pref.collapsed||{}))S.collapsedRows[k]=new Set(v);}}S.compact=S.project.viewState?.compact!==false;S.dirty=false;S.fileDirty=!readOnly&&(!name||(project.schemaVersion||1)<3);
+ S.collapsedRows={};S.rowControls={};for(const [k,v] of Object.entries(S.project.viewState?.collapsedRows||{}))S.collapsedRows[k]=new Set(v);if(readOnly){const pref=await dbGet('reader-rows:'+S.project.id);if(pref){S.rowControls=pref.controls||{};for(const [k,v] of Object.entries(pref.collapsed||{}))S.collapsedRows[k]=new Set(v);}}S.compact=S.project.viewState?.compact!==false;S.dirty=false;S.fileDirty=!readOnly&&(fileDirty||!name||(project.schemaVersion||1)<3);
  await hydrateAssets();renderShell();render();fit();
  if(!readOnly){S.dirty=true;await save();}
  return S.project;
@@ -2554,16 +2569,15 @@ function httpURL(s){try{const u=new URL(s);return ['https:','http:'].includes(u.
 function materialPath(m,preview=false){return (preview?m.previewPath:m.path)||'';}
 function assetURL(m,preview=false){
  if(!m)return '';const key=m.id+(preview?':preview':'');if(DOC.urls.has(key))return DOC.urls.get(key);
- if(location.protocol==='file:'&&m.nativePath&&!preview&&!DOC.sessionFiles.has(key))return windowsFileURL(m.nativePath);
- const path=materialPath(m,preview);if(path&&validRelative(path)){
+ const path=materialPath(m,preview);if(path&&portableRelative(path)){
   const f=DOC.sessionFiles.get(key)||DOC.files.get(path);if(f){const u=URL.createObjectURL(f);DOC.urls.set(key,u);return u;}
   const encoded=path.replace(/\\/g,'/').split('/').map(encodeURIComponent).join('/');
   if(S.project?.materialBaseURL&&httpURL(S.project.materialBaseURL))return new URL(encoded,S.project.materialBaseURL.replace(/\/?$/,'/')).href;
   // A preview may have no resolvable base (e.g. about:blank). Missing media
   // must never abort document startup; folder selection can resolve it later.
-  if(DOC.direct){try{const u=new URL(encoded,location.href);return ['http:','https:','file:'].includes(u.protocol)?u.href:'';}catch{return '';}}
-  return '';
+  if(DOC.direct||DOC.nativePath){try{const u=new URL(encoded,DOC.direct?location.href:windowsFileURL(DOC.nativePath));return ['http:','https:','file:'].includes(u.protocol)?u.href:'';}catch{}}
  }
+ const nativePath=preview?m.previewNativePath:m.nativePath;if(location.protocol==='file:'&&nativePath&&!DOC.sessionFiles.has(key))return windowsFileURL(nativePath);
  if(preview&&m.previewURL)return httpURL(m.previewURL)||'';
  return legacyAssetURL(m,preview);
 }
@@ -2577,10 +2591,18 @@ async function resolveMaterial(m,preview=false){
   }catch(e){if(e.name==='NotFoundError')throw Error('Файл не найден: '+path+'. Исправьте путь в реестре или подключите правильную папку.');throw e;}
  }
  if(DOC.sourceHandles?.has(key)){const file=await DOC.sourceHandles.get(key).getFile();DOC.sessionFiles.set(key,file);if(DOC.urls.has(key))URL.revokeObjectURL(DOC.urls.get(key));DOC.urls.delete(key);}
- if(!DOC.root&&!DOC.sessionFiles.has(key)&&location.protocol==='file:'&&m.nativePath&&!preview){const url=windowsFileURL(m.nativePath);if(url)return url;}
  return assetURL(m,preview);
 }
 function windowsFileURL(path){if(typeof path!=='string')return '';const p=path.replace(/\\/g,'/');if(/^[A-Za-z]:\//.test(p))return 'file:///'+p.split('/').map((s,i)=>i?encodeURIComponent(s):s).join('/');if(p.startsWith('//'))return 'file:'+p.split('/').map(encodeURIComponent).join('/');return '';}
+function relativeMaterialPath(nativePath,documentPath){
+ const source=windowsFileURL(nativePath),target=windowsFileURL(documentPath);if(!source||!target)return '';
+ const a=new URL(source),b=new URL(target),parts=u=>u.pathname.split('/').filter(Boolean).map(decodeURIComponent),from=parts(b).slice(0,-1),to=parts(a);
+ if(a.host.toLowerCase()!==b.host.toLowerCase()||from[0]?.toLowerCase()!==to[0]?.toLowerCase())return '';
+ let common=0;while(common<from.length&&common<to.length&&from[common].toLowerCase()===to[common].toLowerCase())common++;
+ return [...from.slice(common).map(()=>'..'),...to.slice(common)].join('/');
+}
+function portableRelative(path){return typeof path==='string'&&validRelative(path.replace(/^(?:\.\.[\\/])+/,'./'));}
+function rebaseMaterialPaths(project,documentPath){if(documentPath)for(const m of project.materials)for(const [key,native] of [['path','nativePath'],['previewPath','previewNativePath']])if(m[native]){const relative=relativeMaterialPath(m[native],documentPath);if(relative)m[key]=relative;else delete m[key];}}
 async function primeImages(){for(const m of S.project.materials.filter(m=>m.kind==='image'))try{await resolveMaterial(m);}catch{}}
 function inferKind(file){const ext=(file.name||'').split('.').at(-1).toLowerCase();return file.type?.startsWith('video/')||['mp4','webm','ogv','mov','mkv'].includes(ext)?'video':file.type?.startsWith('audio/')||['mp3','wav','ogg'].includes(ext)?'audio':file.type?.startsWith('image/')||['png','jpg','jpeg','webp','gif','svg'].includes(ext)?'image':ext==='pdf'?'pdf':'document';}
 function materialFilePath(file,explicitPath=null){
@@ -2599,8 +2621,9 @@ async function uploadFile(file,replaceId,explicitPath=null,options={}){
  toast('Источник добавлен: '+path,4500);return m;
 }
 async function sourceText(name,element){const node=document.getElementById(element);if(node)return node.textContent;const response=await fetch('/'+name);if(!response.ok)throw Error('Не удалось прочитать код '+name);return response.text();}
-async function portableProject(embed=false){
- const p=documentSnapshot();delete p.portableAssets;
+async function portableProject(embed=false,snapshot=documentSnapshot(),documentPath=DOC.nativePath||''){
+ const p=C.clone(snapshot);delete p.portableAssets;
+ rebaseMaterialPaths(p,documentPath);
  if(desktopAvailable())for(const m of p.materials)if(m.nativePath){try{m.nativeOpenURL=(await nativeCall('link',{nativePath:m.nativePath})).openURL;}catch{}}
  if(!embed){const embedded=p.materials.filter(m=>m.asset&&!m.path||m.previewAsset&&!m.previewPath&&!m.previewURL);if(embedded.length)throw Error('Есть '+embedded.length+' файлов в старом встроенном хранилище. Сначала «Вынести встроенные файлы в папку» или выберите резервный JSON с вложениями.');for(const m of p.materials){if(m.path)delete m.asset;if(m.previewPath||m.previewURL)delete m.previewAsset;}return p;}
  // Legacy backup is explicitly opt-in and has a memory guard, not an HTML format limit.
@@ -2613,17 +2636,18 @@ async function buildDocumentHTML(project){
  return '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+esc(project.title)+' — Pipeline</title><style id="style-source">'+css+'</style></head><body><div id="app"></div><div id="modal-root"></div><div id="toast" role="status"></div><script id="pipeline-document" type="application/json">'+safeJSON(project)+end+'<script>window.STUDIO_DOCUMENT=true;window.PORTABLE_READONLY=true;window.EMOJI='+safeJSON(EMOJI)+';'+end+'<script id="core-source">'+core.replace(/<\/script/gi,'<\\/script')+end+'<script id="app-source">'+app.replace(/<\/script/gi,'<\\/script')+end+'</body></html>';
 }
 async function saveDocument(asNew=false){
- if(!S.project)return;let handle=asNew||!DOC.handle?.name?.toLowerCase().endsWith('.html')?null:DOC.handle;const name=prettyName(S.project.title)+'.html';
+ if(!S.project)return;const doc=DOC,key=DOC.key;let handle=asNew||!DOC.handle?.name?.toLowerCase().endsWith('.html')?null:DOC.handle;const name=prettyName(S.project.title)+'.html';
  if(nativeAvailable()){
   let target=DOC.nativePath&&/\.html?$/i.test(DOC.nativePath)&&!asNew?{nativePath:DOC.nativePath,digest:DOC.nativeDigest}:await nativeCall('pick-save',{name,documentPath:DOC.nativePath||''});if(target.cancelled)return;
-  const project=await portableProject(false),text=await buildDocumentHTML(project),saved=await nativeCall('save',{nativePath:target.nativePath,digest:target.digest,text});DOC.nativePath=saved.nativePath;DOC.nativeDigest=saved.digest;DOC.name=saved.filename;DOC.path=saved.nativePath;DOC.handle=null;S.fileDirty=false;DOC.exportedAt=Date.now();await save();await rememberDocument();updateStatus();toast('HTML записан. Источники остались на своих местах.');return;
+  if(DOC!==doc||DOC.key!==key)return;const version=S.editVersion,project=await portableProject(false,documentSnapshot(),target.nativePath),text=await buildDocumentHTML(project),saved=await nativeCall('save',{nativePath:target.nativePath,digest:target.digest,text});if(DOC!==doc||DOC.key!==key)return;
+  DOC.nativePath=saved.nativePath;DOC.nativeDigest=saved.digest;DOC.name=saved.filename;DOC.path=saved.nativePath;DOC.handle=null;rebaseMaterialPaths(S.project,saved.nativePath);S.dirty=true;S.fileDirty=S.editVersion!==version;DOC.exportedAt=Date.now();await save();if(DOC!==doc||DOC.key!==key)return;await rememberDocument();updateStatus();toast(S.fileDirty?'HTML записан. Более поздние правки ещё не сохранены в файл.':'HTML записан. Источники остались на своих местах.');return;
  }
  // Pick first, before asynchronous packaging can consume transient user activation.
  if(!handle&&window.showSaveFilePicker&&window.isSecureContext){try{handle=await showSaveFilePicker({suggestedName:asNew?name:(DOC.name?.toLowerCase().endsWith('.html')?DOC.name:name),startIn:DOC.handle||DOC.root||'documents',types:[{description:'Документ Pipeline',accept:{'text/html':['.html']}}]});}catch(e){if(e.name==='AbortError')return;if(!['SecurityError','NotAllowedError'].includes(e.name))throw e;}}
- const p=await portableProject(false),text=await buildDocumentHTML(p),blob=new Blob([text],{type:'text/html;charset=utf-8'});
- if(handle){if(await handle.queryPermission({mode:'readwrite'})!=='granted'&&await handle.requestPermission({mode:'readwrite'})!=='granted')throw Error('Сохранение не разрешено. Используйте «Скачать HTML».');const writer=await handle.createWritable();try{await writer.write(blob);await writer.close();}catch(e){try{await writer.abort();}catch{}throw e;}DOC.handle=handle;DOC.name=handle.name;
+ if(DOC!==doc||DOC.key!==key)return;const version=S.editVersion,p=await portableProject(false),text=await buildDocumentHTML(p),blob=new Blob([text],{type:'text/html;charset=utf-8'});
+ if(handle){if(await handle.queryPermission({mode:'readwrite'})!=='granted'&&await handle.requestPermission({mode:'readwrite'})!=='granted')throw Error('Сохранение не разрешено. Используйте «Скачать HTML».');const writer=await handle.createWritable();try{await writer.write(blob);await writer.close();}catch(e){try{await writer.abort();}catch{}throw e;}if(DOC!==doc||DOC.key!==key)return;DOC.handle=handle;DOC.name=handle.name;
  }else{throw Error('Для записи текущего файла откройте документ через окно выбора файла в Chrome или Edge. Отдельную копию можно создать через меню «Документ» → «Скачать HTML».');}
- if(handle&&DOC.root){try{const rel=await DOC.root.resolve(handle);if(rel)DOC.path=DOC.folderName+'/'+rel.join('/');else if(asNew)DOC.path='';if(!rel&&asNew){DOC.root=null;DOC.folderName='';}}catch{if(asNew)DOC.path='';}}else if(asNew)DOC.path='';DOC.exportedAt=Date.now();S.fileDirty=false;await save();await rememberDocument();updateStatus();toast(handle?'HTML документа записан. Материалы остаются отдельными файлами.':'HTML подготовлен к скачиванию. Положите его рядом с папками материалов.',6500);
+ if(handle&&DOC.root){try{const rel=await DOC.root.resolve(handle);if(DOC!==doc||DOC.key!==key)return;if(rel)DOC.path=DOC.folderName+'/'+rel.join('/');else if(asNew)DOC.path='';if(!rel&&asNew){DOC.root=null;DOC.folderName='';}}catch{if(DOC!==doc||DOC.key!==key)return;if(asNew)DOC.path='';}}else if(asNew)DOC.path='';DOC.exportedAt=Date.now();S.fileDirty=S.editVersion!==version;await save();if(DOC!==doc||DOC.key!==key)return;await rememberDocument();updateStatus();toast(S.fileDirty?'HTML записан. Более поздние правки ещё не сохранены в файл.':'HTML документа записан. Материалы остаются отдельными файлами.',6500);
 }
 async function exportHTML(){closeModal();const p=await portableProject(false);const text=await buildDocumentHTML(p);download(new Blob([text],{type:'text/html;charset=utf-8'}),prettyName(p.title)+'.html');toast('HTML документа создан. Внешние материалы в него не встроены.');}
 async function exportJSON(embed=false){const p=await portableProject(embed);download(new Blob([JSON.stringify(p,null,2)],{type:'application/json'}),prettyName(p.title)+(embed?'-backup':'')+'.json');toast(embed?'JSON-резервная копия подготовлена':'Данные документа сохранены отдельно');}
@@ -3768,7 +3792,7 @@ function internalSelectorHTML(prefix,m={}){const pid=m.target?.pageId||m.url?.sp
 function bindInternalSelector(prefix,m={}){const update=()=>{const pg=S.project.pages.find(p=>p.id===$('#'+prefix+'-page').value);$('#'+prefix+'-node').innerHTML='<option value="">Весь лист</option>'+pg.nodes.map(n=>`<option value="${esc(n.id)}" ${m.target?.nodeId===n.id?'selected':''}>${esc(n.title||typeLabels[n.type])}</option>`).join('');};$('#'+prefix+'-page').onchange=update;update();}
 function internalSelection(prefix){const pageId=$('#'+prefix+'-page').value,nodeId=$('#'+prefix+'-node').value,pg=S.project.pages.find(p=>p.id===pageId),n=pg.nodes.find(n=>n.id===nodeId);return {id:C.uid('m'),kind:n?'node':'page',target:{pageId,...(n?{nodeId:n.id}:{})},title:n?.title||pg.title,...(!n?{url:'data:page/id,'+pageId}:{}),version:1};}
 function jumpToNode(target){const hit=C.internalTarget(S.project,{kind:'node',target});if(!hit)return toast('Блок внутренней ссылки удалён или отсутствует');closeModal();closeFilePopover();S.pageIndex=S.project.pages.indexOf(hit.page);focusNode(hit.node.id);const el=$(`#nodes [data-node="${CSS.escape(hit.node.id)}"]`);el?.classList.add('internal-target-flash');setTimeout(()=>el?.classList.remove('internal-target-flash'),3000);return hit;}
-async function openRecentDocument(key){const r=recentDocuments.find(r=>r.key===key);if(r?.server)return openServerDocument();const draft=await dbGet('document:'+key),handle=await dbGet('handle:'+key);if(draft&&(r?.fileDirty||!handle)){await activateDocument(draft,{name:r?.name||'',key});S.fileDirty=!!r?.fileDirty;updateStatus();return;}try{if(handle){if(await handle.queryPermission({mode:'read'})!=='granted'&&await handle.requestPermission({mode:'read'})!=='granted')return;return await openDocumentFile(await handle.getFile(),handle,{key});}}catch(e){if(!draft)throw e;toast('Исходный файл недоступен. Открыта последняя сохранённая копия.');}if(draft){await activateDocument(draft,{name:r?.name||'',key});S.fileDirty=true;updateStatus();}else return openDocumentPicker();}
+async function openRecentDocument(key){const r=recentDocuments.find(r=>r.key===key);if(r?.server)return openServerDocument();const draft=await dbGet('document:'+key),handle=await dbGet('handle:'+key);if(draft&&(r?.fileDirty||!handle)){await activateDocument(draft,{name:r?.name||'',key,fileDirty:!!r?.fileDirty});return;}try{if(handle){if(await handle.queryPermission({mode:'read'})!=='granted'&&await handle.requestPermission({mode:'read'})!=='granted')return;return await openDocumentFile(await handle.getFile(),handle,{key});}}catch(e){if(!draft)throw e;toast('Исходный файл недоступен. Открыта последняя сохранённая копия.');}if(draft){await activateDocument(draft,{name:r?.name||'',key,fileDirty:true});}else return openDocumentPicker();}
 
 /* 0.7.4: state marks, source removal and compact document commands. */
 Object.assign(UI_ICONS,{pdf:'<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/>',group:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M10 6h7v8M6 10v7h8"/>',visibility:'<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',home:'<path d="m3 10 9-7 9 7v11H3zM9 21v-8h6v8"/>',closeProject:'<path d="M10 4H4v16h6m4-12 4 4-4 4m-5-4h12"/>',resizeWindow:'<path d="m9 21 12-12m-6 12 6-6"/>',download:'<path d="M12 3v12m-4-4 4 4 4-4M4 17v4h16v-4"/>',data:'<path d="m8 5-5 7 5 7m8-14 5 7-5 7m-5-15-2 16"/>',rename:'<path d="m16 3 5 5-12 12H4v-5zM13 6l5 5"/>'});
