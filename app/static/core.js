@@ -527,7 +527,7 @@ function display(pg,collapsed=new Set(),compact=true,folded=new Set(),options={}
 function materializeLayout(pg,d){
  if(!d.layoutOffsets)return prior.materializeLayout(pg,d);
  const p=C.clone(pg),shown=new Map(d.nodes.map(n=>[n.id,n]));
- for(const n of p.nodes){if(n.anchorId||n.locked)continue;const v=shown.get(n.id),delta=d.layoutOffsets.get(n.id)||{x:0,y:0};n.x=v?v.x:n.x+(n.offsetX||0)+delta.x;n.y=v?v.y:n.y+(n.offsetY||0)+delta.y;n.offsetX=n.offsetY=0;}
+  for(const n of p.nodes){if(n.anchorId||n.locked)continue;const v=shown.get(n.id),delta=d.layoutOffsets.get(n.id)||d.layoutOffsets.get(d.hiddenOwner?.get(n.id))||{x:0,y:0};n.x=v?v.x:n.x+(n.offsetX||0)+delta.x;n.y=v?v.y:n.y+(n.offsetY||0)+delta.y;n.offsetX=n.offsetY=0;}
  return p;
 }
 function movementSet(pg,selected,options={}){
@@ -1159,7 +1159,8 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
 /* Deletion keeps protected objects and their required endpoints intact. */
 Core.deleteSelection=function(pg,selection){
  const nodes=new Set(selection.node||[]),edges=new Set(selection.edge||[]),drawings=new Set(selection.drawing||[]),buses=new Set(selection.bus||[]);
- for(const n of pg.nodes)if(n.editLocked)nodes.delete(n.id);
+ const byId=new Map(pg.nodes.map(n=>[n.id,n]));
+ for(const n of pg.nodes)if(n.editLocked){nodes.delete(n.id);const seen=new Set([n.id]);let host=byId.get(n.anchorId);while(host&&!seen.has(host.id)){nodes.delete(host.id);seen.add(host.id);host=byId.get(host.anchorId);}}
  for(const e of pg.edges)if(e.editLocked){nodes.delete(e.source);nodes.delete(e.target);edges.delete(e.id);buses.delete(e.bus);}
  for(const d of pg.drawings||[])if(d.editLocked){nodes.delete(d.anchor);drawings.delete(d.id);}
  for(const b of pg.buses||[])if(b.editLocked){buses.delete(b.id);for(const e of pg.edges.filter(e=>e.bus===b.id)){edges.delete(e.id);nodes.delete(e.source);nodes.delete(e.target);}}
@@ -1171,6 +1172,18 @@ Core.deleteSelection=function(pg,selection){
  C.arrange=(pg,ids,mode)=>arrange(pg,ids.filter(id=>!pg.nodes.find(n=>n.id===id)?.editLocked),mode);
  C.autoLayout=(pg,group)=>{const model={...pg,edges:pg.edges.map(e=>{const r=C.edgeRelationship(pg,e);return r?{...e,source:r.parent,target:r.child}:null}).filter(Boolean)},out=autoLayout(model,group);out.edges=C.clone(pg.edges);for(let i=0;i<out.nodes.length;i++)if(pg.nodes[i].editLocked)out.nodes[i]=C.clone(pg.nodes[i]);return out;};
 })(Core);
+/* A duplicated subgraph owns its combs and symmetry constraints. A partial
+   comb with one copied connection becomes an independent connection. */
+Core.duplicateSelection=function(pg,selection){
+ const out=Core.clone(pg),wanted=new Set(selection),copies=pg.nodes.filter(n=>wanted.has(n.id)).map(Core.clone),ids=new Map(copies.map(n=>[n.id,Core.uid('node')])),edgeIds=new Map(),busIds=new Map(),byId=new Map(pg.nodes.map(n=>[n.id,n]));
+ const effective=(n,seen=new Set())=>{if(!n||seen.has(n.id))return {x:0,y:0};seen.add(n.id);const host=byId.get(n.anchorId);if(host){const p=effective(host,seen);return {x:p.x+(n.anchorX||0),y:p.y+(n.anchorY||0)};}return {x:n.x+(n.offsetX||0),y:n.y+(n.offsetY||0)};};
+ for(const cp of copies){const old=cp.id;cp.id=ids.get(old);if(ids.has(cp.anchorId))cp.anchorId=ids.get(cp.anchorId);else{if(cp.anchorId){const visible=effective(byId.get(old));cp.x=visible.x;cp.y=visible.y;cp.offsetX=cp.offsetY=0;}cp.anchorId=null;}cp.offsetX=(cp.offsetX||0)+38;cp.offsetY=(cp.offsetY||0)+38;out.nodes.push(cp);out.groups?.forEach(g=>{if(g.members.includes(old))g.members.push(cp.id);});}
+ const edges=pg.edges.filter(e=>ids.has(e.source)&&ids.has(e.target)).map(e=>{const id=Core.uid('edge');edgeIds.set(e.id,id);return {...Core.clone(e),id,source:ids.get(e.source),target:ids.get(e.target)};});
+ for(const bus of pg.buses||[]){const members=edges.filter(e=>e.bus===bus.id);if(members.length<2)continue;const copy=Core.clone(bus);copy.id=Core.uid('bus');if(ids.has(bus.hub))copy.hub=ids.get(bus.hub);else{delete copy.hub;copy.mode='free';}busIds.set(bus.id,copy.id);(out.buses||=[]).push(copy);}
+ for(const e of edges){if(busIds.has(e.bus))e.bus=busIds.get(e.bus);else delete e.bus;}out.edges.push(...edges);
+ for(const set of pg.symmetrySets||[]){const members=(set.edges||[]).filter(id=>edgeIds.has(id)).map(id=>edgeIds.get(id));if(members.length>=2)(out.symmetrySets||=[]).push({...Core.clone(set),id:Core.uid('symmetry'),edges:members});}
+ return {page:out,ids:copies.map(n=>n.id)};
+};
 /* Routes belonging to a non-crossing symmetry constraint share a routing
    context. Independent row links must not silently become one overlapping
    spine, and a long connector must avoid every visible workflow block. */

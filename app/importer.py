@@ -115,10 +115,10 @@ def import_drawio(raw: bytes, title='Сравнительная оценка в�
                 rowids=children[ident]
                 is_table=s.get('shape')=='table'
                 for rid in sorted(rowids,key=lambda rid:num(records[rid]['g'].get('y'))):
-                    ra=records[rid]; cellids=children[rid] if is_table else [rid]
+                    ra=records[rid]; cellids=sorted(children[rid] if is_table else [rid],key=lambda cid:num(records[cid]['g'].get('x')))
                     if not cellids: continue
                     cells=[]
-                    for cid in sorted(cellids,key=lambda cid:num(records[cid]['g'].get('x'))):
+                    for cid in cellids:
                         ca=records[cid];mid=material(ca.get('link'),ca['label'])
                         if mid and mid not in mids:mids.append(mid)
                         cells.append({'text':text(ca['label']),'html':ca['label'],'rowspan':1,'colspan':1,
