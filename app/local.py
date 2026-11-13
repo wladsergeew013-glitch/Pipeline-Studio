@@ -75,7 +75,7 @@ class LocalFiles:
         if p.suffix.lower() not in EXTENSIONS:raise ValueError('Открытие этого типа файла не поддерживается')
         return p
     def metadata(self,p,document=False):
-        p=Path(p).resolve();out={'nativePath':str(p),'filename':p.name,'path':p.relative_to(self.root).as_posix() if p.is_relative_to(self.root) else p.name}
+        p=Path(p).resolve();out={'nativePath':str(p),'filename':p.name,'path':p.relative_to(self.root).as_posix() if p.is_relative_to(self.root) else ''}
         try:
             st=p.stat()
             if not p.is_file():return {**out,'state':'missing','detail':'По этому пути нет файла'}
@@ -98,10 +98,13 @@ class LocalFiles:
             if route=='pick-save' and p.suffix.lower() not in ('.html','.htm'):raise ValueError('Сохраните документ как HTML')
             info=self.metadata(p,document=route!='pick');info['openKey']=self.open_key(p)
             doc=data.get('documentPath')
-            if doc and p.is_relative_to(Path(doc).resolve().parent):info['path']=p.relative_to(Path(doc).resolve().parent).as_posix()
+            if doc:
+                try:info['path']=Path(os.path.relpath(p,Path(doc).resolve().parent)).as_posix()
+                except ValueError:info['path']=''
             return info
         p=self.resolve(data)
         if route=='stat':return self.metadata(p)
+        if route=='link':return {'nativePath':str(p),'openKey':self.open_key(p)}
         if route in ('open','folder'):
             if not p.is_file():raise FileNotFoundError('Исходный файл перемещён или удалён: '+str(p))
             self.opener(p,folder=route=='folder');return {'opened':True,'nativePath':str(p)}

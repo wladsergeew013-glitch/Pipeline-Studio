@@ -1,4 +1,4 @@
-/* Pipeline Studio 0.7.18 — browser editor and publication viewer.
+/* Pipeline Studio 0.7.19 — browser editor and publication viewer.
    No external scripts, fonts, analytics or cloud viewers are loaded.
    Persistence is either the local Python server, or IndexedDB in portable mode. */
 'use strict';
@@ -499,7 +499,7 @@ function legacyBulkRelink(){
 
 /* 0.3: The editor is an application. A document and its referenced files are separate.
    All filesystem access is explicitly granted by the user; imported HTML is parsed, never run. */
-const RELEASE='0.7.18';
+const RELEASE='0.7.19';
 function desktopAvailable(){return typeof window.STUDIO_DESKTOP?.call==='function';}
 function nativeAvailable(){return desktopAvailable()||!!window.STUDIO_NATIVE?.token&&location.hostname==='127.0.0.1';}
 async function nativeCall(route,data={}){if(desktopAvailable())return window.STUDIO_DESKTOP.call(route,data);if(!nativeAvailable())throw Error('Открытие оригинала доступно в Pipeline Studio.exe');const response=await fetch('/native/'+route,{method:'POST',headers:{'Content-Type':'application/json','X-Studio-Token':window.STUDIO_NATIVE.token},body:JSON.stringify(data),cache:'no-store'});const result=await response.json();if(!response.ok)throw Error(result.error||'Не удалось обратиться к исходному файлу');return result;}
@@ -630,7 +630,34 @@ function relativeMaterialPath(nativePath,documentPath){
  return [...from.slice(common).map(()=>'..'),...to.slice(common)].join('/');
 }
 function portableRelative(path){return typeof path==='string'&&validRelative(path.replace(/^(?:\.\.[\\/])+/,'./'));}
-function rebaseMaterialPaths(project,documentPath){if(documentPath)for(const m of project.materials)for(const [key,native] of [['path','nativePath'],['previewPath','previewNativePath']])if(m[native]){const relative=relativeMaterialPath(m[native],documentPath);if(relative)m[key]=relative;else delete m[key];}}
+const materialFileFields=[['path','nativePath'],['previewPath','previewNativePath']];
+function materialAbsolutePath(relative,documentPath){
+ if(!portableRelative(relative)||!windowsFileURL(documentPath))return '';
+ try{const encoded=relative.replace(/\\/g,'/').split('/').map(encodeURIComponent).join('/'),u=new URL(encoded,windowsFileURL(documentPath)),pathname=decodeURIComponent(u.pathname);return (u.host?'//'+u.host+pathname:pathname.replace(/^\/([A-Za-z]:)/,'$1')).replaceAll('/','\\');}catch{return '';}
+}
+function rebaseMaterialPaths(project,documentPath,sourceDocumentPath='',resolved=new Map()){
+ if(!documentPath)return;
+ for(const m of project.materials)for(const [key,native] of materialFileFields){
+  const physical=resolved.get(m.id+':'+native)||materialAbsolutePath(m[key],sourceDocumentPath)||m[native];if(!physical)continue;
+  if(native==='nativePath'&&m[native]!==physical)delete m.nativeOpenURL;m[native]=physical;
+  const relative=relativeMaterialPath(physical,documentPath);if(relative)m[key]=relative;else delete m[key];
+ }
+}
+async function resolveMaterialSources(project,sourceDocumentPath){
+ const resolved=new Map();if(!nativeAvailable())return resolved;
+ for(const m of project.materials)for(const [key,native] of materialFileFields)if(m[native]||sourceDocumentPath&&portableRelative(m[key]))try{
+  const info=await nativeCall('stat',{nativePath:m[native]||'',path:m[key]||'',documentPath:sourceDocumentPath});if(info.state==='ok'&&info.nativePath)resolved.set(m.id+':'+native,info.nativePath);
+ }catch{}
+ return resolved;
+}
+function applySavedMaterialPaths(project,before,saved,target,sourceDocumentPath){
+ const originals=new Map(before.materials.map(m=>[m.id,m])),prepared=new Map(saved.materials.map(m=>[m.id,m])),resolved=new Map(),links=new Map();
+ for(const m of project.materials){const old=originals.get(m.id),next=prepared.get(m.id);if(!old||!next)continue;
+  for(const [key,native] of materialFileFields)if(m[key]===old[key]&&m[native]===old[native]&&next[native]){resolved.set(m.id+':'+native,next[native]);if(native==='nativePath')links.set(m.id,next.nativeOpenURL);}
+ }
+ rebaseMaterialPaths(project,target,sourceDocumentPath,resolved);
+ for(const m of project.materials)if(links.has(m.id)){if(links.get(m.id))m.nativeOpenURL=links.get(m.id);else delete m.nativeOpenURL;}
+}
 async function primeImages(){for(const m of S.project.materials.filter(m=>m.kind==='image'))try{await resolveMaterial(m);}catch{}}
 function inferKind(file){const ext=(file.name||'').split('.').at(-1).toLowerCase();return file.type?.startsWith('video/')||['mp4','webm','ogv','mov','mkv'].includes(ext)?'video':file.type?.startsWith('audio/')||['mp3','wav','ogg'].includes(ext)?'audio':file.type?.startsWith('image/')||['png','jpg','jpeg','webp','gif','svg'].includes(ext)?'image':ext==='pdf'?'pdf':'document';}
 function materialFilePath(file,explicitPath=null){
@@ -649,10 +676,10 @@ async function uploadFile(file,replaceId,explicitPath=null,options={}){
  toast('Источник добавлен: '+path,4500);return m;
 }
 async function sourceText(name,element){const node=document.getElementById(element);if(node)return node.textContent;const response=await fetch('/'+name);if(!response.ok)throw Error('Не удалось прочитать код '+name);return response.text();}
-async function portableProject(embed=false,snapshot=documentSnapshot(),documentPath=DOC.nativePath||''){
+async function portableProject(embed=false,snapshot=documentSnapshot(),documentPath=DOC.nativePath||'',sourceDocumentPath=DOC.nativePath||''){
  const p=C.clone(snapshot);delete p.portableAssets;
- rebaseMaterialPaths(p,documentPath);
- if(desktopAvailable())for(const m of p.materials)if(m.nativePath){try{m.nativeOpenURL=(await nativeCall('link',{nativePath:m.nativePath})).openURL;}catch{}}
+ const resolved=await resolveMaterialSources(p,sourceDocumentPath);rebaseMaterialPaths(p,documentPath,sourceDocumentPath,resolved);
+ if(nativeAvailable())for(const m of p.materials)if(m.nativePath){delete m.nativeOpenURL;try{const info=await nativeCall('link',{nativePath:m.nativePath});m.nativeOpenURL=info.openURL||(info.openKey?location.origin+'/open-original?path='+encodeURIComponent(info.nativePath)+'&key='+encodeURIComponent(info.openKey):'');}catch{}}
  if(!embed){const embedded=p.materials.filter(m=>m.asset&&!m.path||m.previewAsset&&!m.previewPath&&!m.previewURL);if(embedded.length)throw Error('Есть '+embedded.length+' файлов в старом встроенном хранилище. Сначала «Вынести встроенные файлы в папку» или выберите резервный JSON с вложениями.');for(const m of p.materials){if(m.path)delete m.asset;if(m.previewPath||m.previewURL)delete m.previewAsset;}return p;}
  // Legacy backup is explicitly opt-in and has a memory guard, not an HTML format limit.
  const bytes=p.materials.filter(m=>m.asset&&!m.path).reduce((s,m)=>s+(m.size||0),0);if(bytes>150*1024*1024)throw Error('Резервный JSON с вложениями требует слишком много памяти. Вынесите файлы в папку; HTML со ссылками этого ограничения не имеет.');
@@ -667,8 +694,8 @@ async function saveDocument(asNew=false){
  if(!S.project)return;const doc=DOC,key=DOC.key;let handle=asNew||!DOC.handle?.name?.toLowerCase().endsWith('.html')?null:DOC.handle;const name=prettyName(S.project.title)+'.html';
  if(nativeAvailable()){
   let target=DOC.nativePath&&/\.html?$/i.test(DOC.nativePath)&&!asNew?{nativePath:DOC.nativePath,digest:DOC.nativeDigest}:await nativeCall('pick-save',{name,documentPath:DOC.nativePath||''});if(target.cancelled)return;
-  if(DOC!==doc||DOC.key!==key)return;const version=S.editVersion,project=await portableProject(false,documentSnapshot(),target.nativePath),text=await buildDocumentHTML(project),saved=await nativeCall('save',{nativePath:target.nativePath,digest:target.digest,text});if(DOC!==doc||DOC.key!==key)return;
-  DOC.nativePath=saved.nativePath;DOC.nativeDigest=saved.digest;DOC.name=saved.filename;DOC.path=saved.nativePath;DOC.handle=null;rebaseMaterialPaths(S.project,saved.nativePath);S.dirty=true;S.fileDirty=S.editVersion!==version;DOC.exportedAt=Date.now();await save();if(DOC!==doc||DOC.key!==key)return;await rememberDocument();updateStatus();toast(S.fileDirty?'HTML записан. Более поздние правки ещё не сохранены в файл.':'HTML записан. Источники остались на своих местах.');return;
+  if(DOC!==doc||DOC.key!==key)return;const version=S.editVersion,snapshot=documentSnapshot(),sourceDocumentPath=DOC.nativePath||'',project=await portableProject(false,snapshot,target.nativePath,sourceDocumentPath),text=await buildDocumentHTML(project),saved=await nativeCall('save',{nativePath:target.nativePath,digest:target.digest,text});if(DOC!==doc||DOC.key!==key)return;
+  applySavedMaterialPaths(S.project,snapshot,project,saved.nativePath,sourceDocumentPath);for(const history of [...S.history,...S.redo])applySavedMaterialPaths(history,snapshot,project,saved.nativePath,sourceDocumentPath);DOC.nativePath=saved.nativePath;DOC.nativeDigest=saved.digest;DOC.name=saved.filename;DOC.path=saved.nativePath;DOC.handle=null;S.dirty=true;S.fileDirty=S.editVersion!==version;DOC.exportedAt=Date.now();await save();if(DOC!==doc||DOC.key!==key)return;await rememberDocument();updateStatus();toast(S.fileDirty?'HTML записан. Более поздние правки ещё не сохранены в файл.':'HTML записан. Источники остались на своих местах.');return;
  }
  // Pick first, before asynchronous packaging can consume transient user activation.
  if(!handle&&window.showSaveFilePicker&&window.isSecureContext){try{handle=await showSaveFilePicker({suggestedName:asNew?name:(DOC.name?.toLowerCase().endsWith('.html')?DOC.name:name),startIn:DOC.handle||DOC.root||'documents',types:[{description:'Документ Pipeline',accept:{'text/html':['.html']}}]});}catch(e){if(e.name==='AbortError')return;if(!['SecurityError','NotAllowedError'].includes(e.name))throw e;}}
