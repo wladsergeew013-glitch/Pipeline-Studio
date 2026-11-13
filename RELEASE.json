@@ -1,28 +1,29 @@
 {
-  "version": "0.7.18",
-  "baseVersion": "0.7.17",
-  "baseCommit": "91023965d8e150968a319d8c7a8cb7468f0f7170",
+  "version": "0.7.19",
+  "baseVersion": "0.7.18",
+  "baseCommit": "0837a8ecdd740fe7ae206f0b130d8df081150429",
   "schemaVersion": 6,
   "publicRelease": true,
   "status": "release-ready",
-  "validationDate": "2026-11-12",
-  "report": "docs/REVIEW-FIXES-2026-11-12.md",
+  "releaseDate": "2026-11-13",
+  "validationDate": "2026-11-13",
+  "report": "docs/MATERIAL-IDENTITY-2026-11-13.md",
   "repository": "https://github.com/wladsergeew013-glitch/Pipeline-Studio",
   "validation": {
+    "reviewVmScenarios": 16,
+    "fileBridgeChecks": 34,
+    "localHttpTests": 27,
+    "ci": "github-actions-required-before-merge",
     "modelAndBrowserSuite": "passed",
-    "reviewVmScenarios": 10,
-    "reviewBrowserChecks": 8,
-    "pythonTests": 60,
+    "localFullJsChecks": 982,
+    "pythonTests": 61,
     "pythonSkipped": 1,
-    "fileBridgeChecks": 29,
+    "packagedReviewChecks": 15,
     "packagedDesktopChecks": 23,
-    "packagedReviewChecks": 9,
-    "portableTransferPathCases": 3,
-    "ci": "github-actions-required-before-merge"
+    "portableTransfer": "required-before-release"
   },
   "skippedReasons": [
-    "LibreOffice not installed; controlled conversion and race verified",
+    "LibreOffice not installed; controlled converter regression retained",
     "Private working document not tested"
-  ],
-  "releaseDate": "2026-11-12"
+  ]
 }

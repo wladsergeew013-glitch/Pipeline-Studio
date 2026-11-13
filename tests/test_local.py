@@ -70,4 +70,13 @@ class LocalTests(unittest.TestCase):
         meta=self.command('stat',{'path':'materials/Original.docx','nativePath':str(self.file),'documentPath':str(doc)})[1]
         self.assertEqual(meta['nativePath'],str(self.file))
 
+    def test_27_chosen_external_file_is_not_replaced_by_same_named_neighbour(self):
+        doc=self.root/'Process.html';doc.write_text('document');neighbour=self.root/'Budget.xlsx';neighbour.write_bytes(b'local budget')
+        external=Path(self.tmp.name)/'External';external.mkdir();original=external/'Budget.xlsx';original.write_bytes(b'selected budget')
+        self.picked=doc;self.command('pick-document',{});self.picked=original;meta=self.command('pick',{'documentPath':str(doc)})[1];data={**meta,'documentPath':str(doc)}
+        self.assertEqual((doc.parent/meta['path']).resolve(),original);self.assertNotEqual(meta['path'],'Budget.xlsx')
+        self.assertEqual(self.command('stat',data)[1]['nativePath'],str(original));self.command('open',data);self.assertEqual(self.calls[-1],(original,False));self.command('folder',data);self.assertEqual(self.calls[-1],(original,True))
+        link=self.command('link',data)[1];self.assertEqual(link['nativePath'],str(original));self.assertEqual(link['openKey'],self.files.open_key(original))
+        self.assertEqual(self.command('pick',{})[1]['path'],'')
+
 if __name__=='__main__':unittest.main(verbosity=2)

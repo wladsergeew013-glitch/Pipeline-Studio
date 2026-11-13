@@ -75,5 +75,35 @@ const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {
   const pg=page([node('parent',300,400),node('image',0,0,{type:'image',anchorId:'parent',anchorX:10,anchorY:10,editLocked:true})]);
   const out=C.deleteSelection(pg,{node:['parent','image']});assert(out.nodes.some(n=>n.id==='parent'));assert.equal(out.nodes.find(n=>n.id==='image').anchorId,'parent');assert.deepEqual(C.display(out,new Set(),false).nodes,C.display(pg,new Set(),false).nodes);
  });
+ await test('Moved source and signed link survive save, reopen and save again',async()=>{
+  const a=app();a.context.fixture=project('Moved');await a.run("activateDocument(fixture,{name:'Process.html',nativePath:'D:\\\\Recipient\\\\Process.html'})");
+  a.context.m={id:'moved',path:'materials/image.png',nativePath:'C:\\Author\\materials\\image.png',previewPath:'materials/preview.pdf',previewNativePath:'C:\\Author\\materials\\preview.pdf'};
+  const win=require('node:path').win32,links=[];a.context.bridge=async(route,data)=>{if(route==='stat')return {state:'ok',nativePath:data.path?win.resolve(win.dirname(data.documentPath),data.path):data.nativePath};if(route==='link'){links.push(data.nativePath);return {nativePath:data.nativePath,openURL:'pipelinestudio://open?path='+encodeURIComponent(data.nativePath)}}if(route==='save'){a.context.written=JSON.parse(data.text);return {nativePath:data.nativePath,filename:'Process.html',digest:'saved'}}throw Error(route)};
+  a.run('S.project.materials=[m];window.STUDIO_DESKTOP={call:bridge}');
+  for(let i=0;i<2;i++){await a.run('saveDocument()');assert.equal(a.context.written.materials[0].path,'materials/image.png');assert.equal(a.context.written.materials[0].previewPath,'materials/preview.pdf');assert.equal(a.context.written.materials[0].nativePath,'D:\\Recipient\\materials\\image.png');assert.equal(a.context.written.materials[0].previewNativePath,'D:\\Recipient\\materials\\preview.pdf');assert.equal(a.run('S.project.materials[0].nativePath'),'D:\\Recipient\\materials\\image.png');await a.run("activateDocument(written,{name:'Process.html',nativePath:'D:\\\\Recipient\\\\Process.html'})");}
+  assert(links.every(p=>p==='D:\\Recipient\\materials\\image.png'));
+ });
+ await test('Save As rebases relative-only original and preview from the previous HTML location',async()=>{
+  const a=app();a.context.fixture=project();await a.run("activateDocument(fixture,{name:'Process.html',nativePath:'C:\\\\Project\\\\Process.html'})");a.context.m={id:'relative',path:'materials/image.png',previewPath:'previews/image.pdf'};a.run('S.project.materials=[m]');
+  const p=await a.run("portableProject(false,documentSnapshot(),'C:\\\\Project\\\\Reports\\\\Process.html')");
+  assert.equal(p.materials[0].path,'../materials/image.png');assert.equal(p.materials[0].previewPath,'../previews/image.pdf');assert.equal(p.materials[0].nativePath,'C:\\Project\\materials\\image.png');assert.equal(p.materials[0].previewNativePath,'C:\\Project\\previews\\image.pdf');assert.equal(a.context.m.path,'materials/image.png');
+ });
+ await test('A replacement during Save As keeps its physical source in the active document',async()=>{
+  const a=app(),gate=deferred(),win=require('node:path').win32;a.context.gate=gate;a.context.fixture=project();await a.run("activateDocument(fixture,{name:'Process.html',nativePath:'D:\\\\Recipient\\\\Process.html'})");
+  a.context.m={id:'replace',path:'materials/image.png',nativePath:'C:\\Author\\image.png'};
+  a.context.bridge=async(route,data)=>{if(route==='pick-save')return {nativePath:'D:\\Recipient\\Reports\\Process.html'};if(route==='stat')return {state:'ok',nativePath:data.path?win.resolve(win.dirname(data.documentPath),data.path):data.nativePath};if(route==='link')return {openURL:'pipelinestudio://test'};if(route==='save'){a.context.writing=true;a.context.written=JSON.parse(data.text);await gate.promise;return {nativePath:data.nativePath,filename:'Process.html',digest:'saved'}}throw Error(route)};
+  a.run('S.project.materials=[m];window.STUDIO_DESKTOP={call:bridge}');const saving=a.run('saveDocument(true)');while(!a.context.writing)await new Promise(r=>setImmediate(r));
+  a.run("S.project.materials[0]={id:'replace',nativePath:'D:\\\\External\\\\image.png',path:'../External/image.png'};changed()");gate.resolve();await saving;
+  assert.equal(a.context.written.materials[0].nativePath,'D:\\Recipient\\materials\\image.png');assert.equal(a.run('S.project.materials[0].nativePath'),'D:\\External\\image.png');assert.equal(a.run('S.project.materials[0].path'),'../../External/image.png');assert.equal(a.run('S.fileDirty'),true);
+ });
+ for(const orientation of ['vertical','horizontal'])await test('Ctrl+D translates the manual '+orientation+' free-comb axis',async()=>{
+  const horizontal=orientation==='horizontal',nodes=[node('s1',0,0,{w:100,h:100}),node('s2',horizontal?200:0,horizontal?0:200,{w:100,h:100}),node('t1',horizontal?0:400,horizontal?400:0,{w:100,h:100}),node('t2',horizontal?200:400,horizontal?400:200,{w:100,h:100})],edges=[edge('e1','s1','t1',{bus:'free',sourcePort:horizontal?'bottom':'right',targetPort:horizontal?'top':'left'}),edge('e2','s2','t2',{bus:'free',sourcePort:horizontal?'bottom':'right',targetPort:horizontal?'top':'left'})],pg=page(nodes,edges,{buses:[{id:'free',mode:'free',orientation,axis:120,symmetry:false}]}),a=app();a.context.fixture={...project(),pages:[pg]};await a.run("activateDocument(fixture,{name:'Axis.html'});S.selected=new Set(page().nodes.map(n=>n.id));action('duplicate')");
+  const copied=a.run('page()'),ids=a.run('[...S.selected]'),bus=copied.buses.find(b=>b.id!=='free');assert.equal(bus.axis,158);const isolated={...copied,nodes:copied.nodes.filter(n=>ids.includes(n.id)),edges:copied.edges.filter(e=>e.bus===bus.id),buses:[bus]};assert.deepEqual(C.busGeometryConflicts(C.display(isolated,new Set(),false),bus.id),[]);
+ });
+ await test('Undo and redo after Save As keep the material based at its actual source',async()=>{
+  const a=app(),win=require('node:path').win32;a.context.fixture=project();await a.run("activateDocument(fixture,{name:'Process.html',nativePath:'C:\\\\Project\\\\Process.html'})");a.run("S.project.materials=[{id:'relative',path:'materials/image.png'}];change(()=>S.project.title='Edit before Save As')");
+  a.context.bridge=async(route,data)=>{if(route==='pick-save')return {nativePath:'C:\\Project\\Reports\\Process.html'};if(route==='stat')return {state:'ok',nativePath:data.path?win.resolve(win.dirname(data.documentPath),data.path):data.nativePath};if(route==='link')return {openURL:'pipelinestudio://test'};if(route==='save')return {nativePath:data.nativePath,filename:'Process.html',digest:'saved'};throw Error(route)};
+  a.run('window.STUDIO_DESKTOP={call:bridge}');await a.run('saveDocument(true)');await a.run('undo()');assert.equal(a.run('S.project.materials[0].path'),'../materials/image.png');await a.run('redo()');assert.equal(a.run('S.project.materials[0].path'),'../materials/image.png');
+ });
  console.log('TOTAL',checks.length);
 })().catch(e=>{console.error(e);process.exitCode=1});
