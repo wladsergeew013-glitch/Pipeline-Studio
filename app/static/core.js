@@ -662,7 +662,7 @@ function dragPlan(pg,selection,folds=new Set(),mode={}){
 }
 function moveRouteObjects(pg,ids,dx,dy,base){
  const oldBus=new Map((base.buses||[]).map(b=>[b.id,b]));
- for(const b of pg.buses||[]){const old=oldBus.get(b.id);if(!old||!Number.isFinite(old.axis))continue;const es=base.edges.filter(e=>e.bus===b.id);if(es.length&&es.every(e=>ids.has(e.source)&&ids.has(e.target)))b.axis=old.axis+(b.orientation==='horizontal'?dy:dx);}
+ for(const b of pg.buses||[]){const old=oldBus.get(b.id);if(!old||!Number.isFinite(old.axis))continue;const es=base.edges.filter(e=>e.bus===b.id);if(es.length&&es.every(e=>ids.has(e.source)&&ids.has(e.target))){const before=C.anchorPositions(base),after=C.anchorPositions(pg),key=b.orientation==='horizontal'?'y':'x',deltas=[...new Set(es.flatMap(e=>[e.source,e.target]))].map(id=>after.get(id)[key]-before.get(id)[key]);if(deltas.every(d=>Math.abs(d-deltas[0])<.001))b.axis=old.axis+deltas[0];}}
  for(const s of pg.drawings||[]){if(!s.anchor||!ids.has(s.anchor))continue;/* relative paths follow host automatically */}
 }
 function pathData(points,controls=[]){
@@ -747,7 +747,8 @@ function combineEdges(pg,ids,requested='auto'){
  for(const e of p.edges)if(unique.includes(e.id))e.bus=b.id;upgradeBus(p,b);return cleanBuses(p);
 }
 function joinBus(pg,id,edgeIds){const p=C.clone(pg),b=p.buses?.find(b=>b.id===id);if(!b)throw Error('Гребёнка не найдена');
- for(const id of new Set(edgeIds)){const e=p.edges.find(e=>e.id===id);if(!e)throw Error('Связь не найдена');e.bus=b.id;}
+ if(b.editLocked)throw Error('Гребёнка защищена от правки');
+ for(const id of new Set(edgeIds)){const e=p.edges.find(e=>e.id===id);if(!e)throw Error('Связь не найдена');if(e.editLocked||p.buses.find(x=>x.id===e.bus)?.editLocked)throw Error('Связь или исходная гребёнка защищена от правки');e.bus=b.id;}
  upgradeBus(p,b);return cleanBuses(p);
 }
 function terminalTap(tip,axis,vertical,node){
@@ -1159,12 +1160,14 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
 /* Deletion keeps protected objects and their required endpoints intact. */
 Core.deleteSelection=function(pg,selection){
  const nodes=new Set(selection.node||[]),edges=new Set(selection.edge||[]),drawings=new Set(selection.drawing||[]),buses=new Set(selection.bus||[]);
- const byId=new Map(pg.nodes.map(n=>[n.id,n]));
- for(const n of pg.nodes)if(n.editLocked){nodes.delete(n.id);const seen=new Set([n.id]);let host=byId.get(n.anchorId);while(host&&!seen.has(host.id)){nodes.delete(host.id);seen.add(host.id);host=byId.get(host.anchorId);}}
- for(const e of pg.edges)if(e.editLocked){nodes.delete(e.source);nodes.delete(e.target);edges.delete(e.id);buses.delete(e.bus);}
- for(const d of pg.drawings||[])if(d.editLocked){nodes.delete(d.anchor);drawings.delete(d.id);}
- for(const b of pg.buses||[])if(b.editLocked){buses.delete(b.id);for(const e of pg.edges.filter(e=>e.bus===b.id)){edges.delete(e.id);nodes.delete(e.source);nodes.delete(e.target);}}
- for(const n of pg.nodes)if(n.anchorId&&nodes.has(n.anchorId)&&!n.editLocked)nodes.add(n.id);
+ const byId=new Map(pg.nodes.map(n=>[n.id,n])),required=new Set();
+ const keep=id=>{const seen=new Set();while(id&&byId.has(id)&&!seen.has(id)){seen.add(id);required.add(id);id=byId.get(id).anchorId;}};
+ for(const n of pg.nodes)if(n.editLocked)keep(n.id);
+ for(const e of pg.edges)if(e.editLocked){keep(e.source);keep(e.target);edges.delete(e.id);buses.delete(e.bus);}
+ for(const d of pg.drawings||[])if(d.editLocked){keep(d.anchor);drawings.delete(d.id);}
+ for(const b of pg.buses||[])if(b.editLocked){buses.delete(b.id);for(const e of pg.edges.filter(e=>e.bus===b.id)){edges.delete(e.id);keep(e.source);keep(e.target);}}
+ for(const id of required)nodes.delete(id);
+ let added=true;while(added){added=false;for(const n of pg.nodes)if(n.anchorId&&nodes.has(n.anchorId)&&!nodes.has(n.id)&&!required.has(n.id)){nodes.add(n.id);added=true;}}
  const out=Core.clone(pg);out.nodes=out.nodes.filter(n=>!nodes.has(n.id));out.edges=out.edges.filter(e=>!edges.has(e.id)&&!nodes.has(e.source)&&!nodes.has(e.target));out.drawings=(out.drawings||[]).filter(d=>!drawings.has(d.id)&&!nodes.has(d.anchor));out.groups?.forEach(g=>g.members=g.members.filter(id=>!nodes.has(id)));out.buses=(out.buses||[]).filter(b=>!buses.has(b.id));for(const e of out.edges)if(buses.has(e.bus))delete e.bus;Core.cleanBuses(out);return JSON.stringify(out)===JSON.stringify(pg)?pg:out;
 };
 
@@ -1568,7 +1571,7 @@ Core.duplicateSelection=function(pg,selection){
  function moveNodes(base,ids,dx,dy,driver,prepared){const plan=prepared||prepareMove(base,ids,driver),attempt=(dx,dy)=>{const out=C.clone(plan.model||base),raw=new Map((plan.model||base).nodes.map(n=>[n.id,n])),now=new Map(out.nodes.map(n=>[n.id,n])),moving=plan.moving;
   const move=(set,x,y)=>{for(const id of set){const n=now.get(id),r=raw.get(id);if(!n||n.locked)continue;if(n.anchorId){if(!set.has(n.anchorId)){n.anchorX=(r.anchorX||0)+x;n.anchorY=(r.anchorY||0)+y;}}else{n.x=r.x+(r.offsetX||0)+x;n.y=r.y+(r.offsetY||0)+y;n.offsetX=n.offsetY=0;}}};
   move(moving,dx,dy);const affected=new Set(moving);
-  for(const mirror of plan.mirrors){move(mirror.ids,mirror.axis==='y'?dx:dx*mirror.factor,mirror.axis==='y'?dy*mirror.factor:dy);for(const id of mirror.ids)affected.add(id);}C.moveRouteObjects(out,affected,dx,dy,plan.model||base);return out;};
+  for(const mirror of plan.mirrors){move(mirror.ids,mirror.axis==='y'?dx:dx*mirror.factor,mirror.axis==='y'?dy*mirror.factor:dy);for(const id of mirror.ids)affected.add(id);}C.preserveLockedAnchors(plan.model||base,out);C.moveRouteObjects(out,affected,dx,dy,plan.model||base);return out;};
   let acceptedDisplay=null,acceptedBundle=null,checks=0;
   const valid=(out,x,y)=>{if(!plan.strict)return true;checks++;const v=plan.view,d=display(out,v.folds,v.compact,v.folded,v.options),a=plan.before.nodes.find(n=>n.id===driver),b=d.nodes.find(n=>n.id===driver);
    // Collision packing must not send the grabbed block past the pointer or in
@@ -1650,8 +1653,8 @@ Core.duplicateSelection=function(pg,selection){
  function bulkPatch(pg,selection,patch,category='all'){
   const out=C.clone(pg),allowed={node:['title','fill','color','textColor','stroke','fontSize','bold','italic','align','w','h','autoSize','relativeLock','collapsible','collapseBoundary','locked','editLocked','branchSymmetry','branchGap','branchCrossings','type','tableAutoSize','tableWordWrap','tableBodyPosition'],edge:['label','color','stroke','width','labelColor','fontSize','arrow','arrowStart','dashed','style','parentRole','labelCentered','editLocked'],bus:['title','color','stroke','width','dashed','style','symmetry','alignGap','orientation','allowCrossings','moveTogether','editLocked'],drawing:['color','width','editLocked']};
   for(const [list,kind] of [['nodes','node'],['edges','edge'],['buses','bus'],['drawings','drawing']])for(const item of out[list]||[]){if(!(selection[kind]||[]).includes(item.id)||(category!=='all'&&category!==kind&&category!==(kind==='node'?item.type:kind)))continue;if(item.editLocked&&!Object.hasOwn(patch,'editLocked'))continue;
-   for(const [key,value] of Object.entries(patch)){if(!allowed[kind].includes(key))continue;if(key.startsWith('branch')&&item.type!=='decision'||key.startsWith('table')&&!item.table)continue;
-    if(key==='color')item[kind==='drawing'?'color':'stroke']=value;else if(key==='textColor')item.color=value;
+   for(const [key,value] of Object.entries(patch)){if(!allowed[kind].includes(key))continue;if(kind==='node'&&item.locked&&['w','h','autoSize','tableAutoSize'].includes(key))continue;if(key==='tableBodyPosition'&&!['center','header'].includes(value))throw Error('Некорректное положение портов таблицы');if(key.startsWith('branch')&&item.type!=='decision'||key.startsWith('table')&&!item.table)continue;
+    if(key==='title'){item.title=value;delete item.html;}else if(key==='color')item[kind==='drawing'?'color':'stroke']=value;else if(key==='textColor')item.color=value;
     else if(key==='type'){if(['block','decision','comment','note'].includes(item.type)&&['block','decision','comment'].includes(value)&&!item.table)item.type=value;}
     else if(key==='tableAutoSize')C.setTableAutoSize(item,value);else if(key==='tableWordWrap')item.table.wordWrap=value;
     else if(key==='symmetry'){item.symmetry=item.autoAlign=value;out.symmetrySets=(out.symmetrySets||[]).filter(s=>!s.edges.every(id=>out.edges.find(e=>e.id===id)?.bus===item.id));}
@@ -1662,3 +1665,58 @@ Core.duplicateSelection=function(pg,selection){
  const labelPlacement=(edge,route)=>{const p=prev.labelPlacement(edge,route);return {...p,x:p.x+(edge.labelOffsetX||0),y:p.y+(edge.labelOffsetY||0)};};
  Object.assign(C,{display,dragPlan,prepareMove,moveNodes,setEdgeSymmetry,updateSymmetry,releaseSymmetry,coupledRoots,expandedFolds,normalizeV6,convertNode,bulkPatch,labelPlacement,geometryConflicts,routeEditAllowed,busGeometryConflicts,busEditAllowed});
 })(Core);
+
+Core.createPage=function(title='Новый процесс'){return {id:Core.uid('page'),title,nodes:[],edges:[],buses:[],groups:[],drawings:[],symmetrySets:[],collapseMode:'nodes',layoutOptions:{}};};
+
+Core.anchorPositions=function(pg){
+ const nodes=new Map(pg.nodes.map(n=>[n.id,n])),positions=new Map();
+ const visit=(id,seen=new Set())=>{if(positions.has(id))return positions.get(id);const n=nodes.get(id);if(!n||seen.has(id))return {x:0,y:0};seen.add(id);const host=nodes.get(n.anchorId),p=host?visit(host.id,seen):null,result=p?{x:p.x+(n.anchorX||0),y:p.y+(n.anchorY||0)}:{x:n.x+(n.offsetX||0),y:n.y+(n.offsetY||0)};positions.set(id,result);return result;};
+ for(const n of pg.nodes)visit(n.id);return positions;
+};
+Core.preserveLockedAnchors=function(base,out){
+ const before=Core.anchorPositions(base),desired=Core.anchorPositions({...out,nodes:out.nodes.map(n=>n.locked&&n.anchorId&&before.has(n.id)?{...n,...before.get(n.id),anchorId:null,offsetX:0,offsetY:0}:n)});
+ for(const n of out.nodes)if(n.locked&&n.anchorId&&before.has(n.id)){const host=desired.get(n.anchorId),p=before.get(n.id);if(host){n.anchorX=p.x-host.x;n.anchorY=p.y-host.y;n.x=p.x;n.y=p.y;}}
+ return out;
+};
+{
+ const display=Core.display,materialize=Core.materializeLayout,arrange=Core.arrange,layout=Core.autoLayout;
+ Core.display=(pg,...args)=>{const d=display(pg,...args),positions=Core.anchorPositions(pg);for(const n of d.nodes)if(n.locked&&n.anchorId){const p=positions.get(n.id);if(p)Object.assign(n,p);}return d;};
+ Core.materializeLayout=(pg,...args)=>Core.preserveLockedAnchors(pg,materialize(pg,...args));
+ Core.arrange=(pg,...args)=>Core.preserveLockedAnchors(pg,arrange(pg,...args));
+ Core.autoLayout=(pg,...args)=>Core.preserveLockedAnchors(pg,layout(pg,...args));
+}
+Core.preflightTableChange=function(pg,id,table){
+ const n=pg.nodes.find(n=>n.id===id);if(!n)throw Error('Таблица не найдена');
+ if(n.editLocked)throw Error('Таблица защищена от правки');
+ const rows=new Set(table.rowIds),ports=new Set((n.ports||[]).filter(p=>p.rowId&&!rows.has(p.rowId)).map(p=>p.id));
+ const removed=pg.edges.filter(e=>e.source===id&&ports.has(e.sourcePort)||e.target===id&&ports.has(e.targetPort));
+ if(removed.some(e=>e.editLocked||pg.buses?.find(b=>b.id===e.bus)?.editLocked))throw Error('Строка связана с защищённой связью или гребёнкой. Изменение таблицы отменено.');
+ return {ports,removed};
+};
+
+// Validate values before any legacy coercion or interpolation into HTML/SVG.
+Core.validatePresentation=function(project){
+ const number=(obj,key,min,max,legacyString=false)=>{
+  if(obj[key]===undefined)return;
+  let value=obj[key];
+  if(legacyString&&typeof value==='string'&&/^\s*\d+(?:\.\d+)?\s*$/.test(value))value=Number(value);
+  if(typeof value!=='number'||!Number.isFinite(value)||value<min||value>max)throw Error('Некорректное поле '+key);
+  obj[key]=value;
+ };
+ for(const m of project.materials||[])if(m.version!==undefined&&(!Number.isSafeInteger(m.version)||m.version<1))throw Error('Некорректная версия материала');
+ for(const pg of project.pages||[]){
+  for(const n of pg.nodes||[]){
+   number(n,'fontSize',1,1000,true);
+   if(n.table){
+    if(n.table.wordWrap!==undefined&&!['words','hyphenate'].includes(n.table.wordWrap))throw Error('Некорректный перенос слов');
+    for(const row of n.table.cells||[])for(const cell of row)if(cell)number(cell,'fontSize',1,1000);
+   }
+  }
+  for(const item of [...pg.edges||[],...pg.buses||[],...pg.drawings||[]]){number(item,'width',0,1000);number(item,'fontSize',1,1000);}
+ }
+ return project;
+};
+{
+ const normalize=Core.normalizeV6;
+ Core.normalizeV6=p=>normalize(Core.validatePresentation(p));
+}

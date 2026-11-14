@@ -3,7 +3,7 @@ The default bind is 127.0.0.1. A LAN bind requires STUDIO_PASSWORD.
 For a real deployment put an authenticated HTTPS reverse proxy in front.
 """
 from __future__ import annotations
-import argparse, base64, hashlib, hmac, io, json, mimetypes, os, re, secrets, shutil, subprocess, tempfile, threading, time, uuid, zipfile
+import argparse, base64, copy, hashlib, hmac, io, json, math, mimetypes, os, re, secrets, shutil, subprocess, tempfile, threading, time, uuid, zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from html.parser import HTMLParser
 from pathlib import Path
@@ -18,18 +18,71 @@ PUB=DATA/'publications';PUB.mkdir(exist_ok=True)
 LOCK=threading.RLock(); SESSIONS={}
 PASSWORD=os.environ.get('STUDIO_PASSWORD',''); READER=os.environ.get('STUDIO_READER_PASSWORD','')
 MAX_UPLOAD=512*1024*1024
+VERSION=(BASE.parent/'VERSION').read_text('utf8').strip()
+STATE_KEYS={'project.json':'project','materials.json':'materials','project.previous.json':'previous'}
 
 def load(path,default=None):
+    if path.parent==DATA and path.name in STATE_KEYS and (DATA/'state.json').exists():
+        state=json.loads((DATA/'state.json').read_text('utf8'))
+        return state.get(STATE_KEYS[path.name],default)
     return json.loads(path.read_text('utf8')) if path.exists() else default
 
 def write(path,obj):
+    if path.parent==DATA and path.name in STATE_KEYS:
+        with LOCK:
+            state=load(DATA/'state.json') or {key:load(DATA/name) for name,key in STATE_KEYS.items()}
+            state[STATE_KEYS[path.name]]=obj
+            return write(DATA/'state.json',state)
     tmp=path.with_suffix(path.suffix+'.tmp')
-    tmp.write_text(json.dumps(obj,ensure_ascii=False),encoding='utf8');os.replace(tmp,path)
+    try:
+        with tmp.open('w',encoding='utf8') as f:
+            json.dump(obj,f,ensure_ascii=False);f.flush();os.fsync(f.fileno())
+        os.replace(tmp,path)
+    finally:
+        if tmp.exists():tmp.unlink()
+
+def commit_state(project,materials,previous=None):
+    project={k:v for k,v in project.items() if k not in ('materials','deletedMaterials')}
+    state={'project':project,'materials':materials,'previous':previous if previous is not None else load(DATA/'project.previous.json')}
+    write(DATA/'state.json',state)
+
+def commit_materials(materials):
+    p=load(DATA/'project.json');p['revision']=p.get('revision',0)+1
+    commit_state(p,materials)
+    return p['revision']
 
 def initialize():
-    if not (DATA/'project.json').exists():
-        seed=load(BASE/'data'/'seed.json');write(DATA/'project.json',seed);write(DATA/'materials.json',seed['materials'])
-    if not (DATA/'materials.json').exists():write(DATA/'materials.json',[])
+    with LOCK:
+        if (DATA/'state.json').exists():return
+        seed=load(DATA/'project.json') or load(BASE/'data'/'seed.json')
+        commit_state(seed,load(DATA/'materials.json',seed.get('materials',[])))
+
+def checked_mime(value):
+    # Parse before headers are started, including for old on-disk registries.
+    token="[!#$%&'*+.^_|~0-9A-Za-z"+chr(96)+"-]+"
+    quoted=r'"(?:[\x20-\x21\x23-\x5b\x5d-\x7e]|\\[\x20-\x7e])*"'
+    if not isinstance(value,str) or not re.fullmatch(token+'/'+token+r'(?: *; *'+token+'=(?:'+token+'|'+quoted+r'))*',value):
+        raise ValueError('Некорректный MIME-тип')
+    return value,value.split(';',1)[0].lower()
+
+def check_presentation(obj):
+    def number(item,key,low,high,legacy_string=False):
+        if key not in item:return
+        value=item[key]
+        if legacy_string and isinstance(value,str) and re.fullmatch(r'\s*\d+(?:\.\d+)?\s*',value):value=float(value)
+        if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or not low<=value<=high:raise ValueError('Некорректное поле '+key)
+        item[key]=value
+    for pg in obj.get('pages',[]):
+        for n in pg.get('nodes',[]):
+            number(n,'fontSize',1,1000,True)
+            if n.get('table'):
+                t=n['table']
+                if 'wordWrap' in t and t['wordWrap'] not in ('words','hyphenate'):raise ValueError('Некорректный перенос слов')
+                for row in t.get('cells',[]):
+                    for cell in row:
+                        if cell:number(cell,'fontSize',1,1000)
+        for item in pg.get('edges',[])+pg.get('buses',[])+pg.get('drawings',[]):
+            number(item,'width',0,1000);number(item,'fontSize',1,1000)
 
 def asset_path(asset):
     if not isinstance(asset,str) or not re.fullmatch(r'[a-f0-9]{32}(?:-preview)?',asset):raise ValueError('Некорректный ID файла')
@@ -44,6 +97,9 @@ def check_materials(mats):
         if not isinstance(m,dict) or not isinstance(m.get('id'),str) or not m['id']:raise ValueError('Некорректный ID материала')
         if m['id'] in ids:raise ValueError('Повтор ID материала')
         ids.add(m['id'])
+        for key in ('version','baseVersion'):
+            if key in m and (type(m[key]) is not int or not 1<=m[key]<=9007199254740991):raise ValueError('Некорректная версия материала')
+        if 'mime' in m:checked_mime(m['mime'])
         for key in ('asset','previewAsset'):
             value=m.get(key)
             if value is not None and value!='':asset_path(value)
@@ -53,6 +109,7 @@ def check_project(obj):
     if not isinstance(obj,dict) or obj.get('format')!='pipeline-studio':raise ValueError('Неизвестный формат проекта')
     if obj.get('materials') is not None:check_materials(obj['materials'])
     if not isinstance(obj.get('pages'),list) or not obj['pages']:raise ValueError('Нужна хотя бы одна страница')
+    check_presentation(obj)
     ids=set()
     for p in obj['pages']:
         if p['id'] in ids:raise ValueError('Повтор ID страницы')
@@ -106,6 +163,7 @@ def used_materials(project):
     for p in project['pages']:
         for n in p['nodes']:
             out.update(n.get('materials',[]))
+            links=MaterialLinks();links.feed(n.get('html') or '');out.update(links.ids)
             if n.get('imageMaterial'):out.add(n['imageMaterial'])
             for ic in n.get('icons',[]):
                 if ic.get('material'):out.add(ic['material'])
@@ -115,7 +173,36 @@ def used_materials(project):
                         if c.get('material'):out.add(c['material'])
                         out.update(mid for mid in c.get('materials',[]) if isinstance(mid,str))
                         links=MaterialLinks();links.feed(c.get('html') or '');out.update(links.ids)
+    registry={m['id']:m for m in load(DATA/'materials.json',[])}
+    queue=list(out)
+    while queue:
+        mid=queue.pop();preview=registry.get(mid,{}).get('previewMaterial')
+        if isinstance(preview,str) and preview not in out:out.add(preview);queue.append(preview)
     return out
+
+class Conflict(ValueError):pass
+
+def wire_materials(materials):
+    return [{**m,'version':m.get('version',1),'baseVersion':m.get('version',1)} for m in materials]
+
+def merge_materials(current,incoming,deleted=()):
+    current={m['id']:copy.deepcopy(m) for m in current}
+    removed={m['id'] for m in deleted}
+    if removed.intersection(m['id'] for m in incoming or []):raise ValueError('Источник одновременно сохранён и удалён')
+    for m in deleted:
+        prev=current.get(m['id'])
+        if prev and m['version']!=prev.get('version',1):raise Conflict('Источник обновлён в другом окне')
+    for m in incoming or []:
+        item={k:v for k,v in m.items() if k not in ('baseVersion','version')}
+        prev=current.get(m['id'])
+        if prev:
+            old={k:v for k,v in prev.items() if k not in ('baseVersion','version')}
+            if item==old:continue
+            if m.get('baseVersion')!=prev.get('version',1):raise Conflict('Материал обновлён в другом окне. Перезагрузите проект.')
+        item['version']=prev.get('version',1)+1 if prev else 1
+        current[m['id']]=item
+    for mid in removed:current.pop(mid,None)
+    return list(current.values())
 
 class Handler(BaseHTTPRequestHandler):
     server_version='PipelineStudio/0.7'
@@ -162,20 +249,24 @@ class Handler(BaseHTTPRequestHandler):
         return self.do_GET()
     def get(self):
         url=urlparse(self.path);path=url.path;q=parse_qs(url.query)
-        if path=='/api/session':return self.json({'role':self.role(),'passwordRequired':bool(PASSWORD),'version':'0.5.0'})
+        if path=='/api/session':return self.json({'role':self.role(),'passwordRequired':bool(PASSWORD),'version':VERSION})
         if path=='/api/project':
             if not self.need(True):return
-            p=load(DATA/'project.json');p['materials']=load(DATA/'materials.json',[]);return self.json(p)
+            with LOCK:
+                p=load(DATA/'project.json');p['materials']=wire_materials(load(DATA/'materials.json',[]))
+            return self.json(p)
         if path=='/api/materials':
             if not self.need(True):return
-            return self.json(load(DATA/'materials.json',[]))
+            with LOCK:mats=wire_materials(load(DATA/'materials.json',[]))
+            return self.json(mats)
         if path.startswith('/api/published/'):
             if not self.need():return
             key=path.rsplit('/',1)[1]
             if not re.fullmatch('[a-f0-9]{32}',key):return self.json({'error':'Не найдена публикация'},404)
             p=load(PUB/(key+'.json'))
             if not p:return self.json({'error':'Не найдена публикация'},404)
-            mids=used_materials(p);p['materials']=[m for m in load(DATA/'materials.json',[]) if m['id'] in mids]
+            with LOCK:
+                mids=used_materials(p);p['materials']=[m for m in load(DATA/'materials.json',[]) if m['id'] in mids]
             return self.json(p)
         if path=='/api/publications':
             if not self.need():return
@@ -184,21 +275,25 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/api/backup':
             if not self.need(True):return
             stream=io.BytesIO()
-            with zipfile.ZipFile(stream,'w',zipfile.ZIP_DEFLATED) as z:
+            with LOCK,zipfile.ZipFile(stream,'w',zipfile.ZIP_DEFLATED) as z:
+                for name in STATE_KEYS:
+                    value=load(DATA/name)
+                    if value is not None:z.writestr(name,json.dumps(value,ensure_ascii=False))
                 for f in DATA.rglob('*'):
-                    if f.is_file() and not f.name.endswith('.tmp'):z.write(f,str(f.relative_to(DATA)))
+                    if f.is_file() and f.name not in (*STATE_KEYS,'state.json') and not f.name.endswith('.tmp'):z.write(f,str(f.relative_to(DATA)))
             b=stream.getvalue();self.send_response(200);self.send_header('Content-Type','application/zip');self.send_header('Content-Disposition','attachment; filename="pipeline-backup.zip"');self.send_header('Content-Length',str(len(b)));self.end_headers();self.wfile.write(b);return
         if path.startswith('/media/'):
             if not self.need():return
             aid=path.rsplit('/',1)[1]
             if not re.fullmatch('[a-f0-9]{32}(?:-preview)?',aid):return self.json({'error':'Файл не найден'},404)
-            mats=load(DATA/'materials.json',[])
-            if self.role()!='editor':
-                pub=q.get('view',[''])[0]
-                if not re.fullmatch('[a-f0-9]{32}',pub):return self.json({'error':'Нет доступа к материалу'},403)
-                pp=load(PUB/(pub+'.json'))
-                used=used_materials(pp) if pp else set()
-                mats=[m for m in mats if m['id'] in used]
+            with LOCK:
+                mats=load(DATA/'materials.json',[])
+                if self.role()!='editor':
+                    pub=q.get('view',[''])[0]
+                    if not re.fullmatch('[a-f0-9]{32}',pub):return self.json({'error':'Нет доступа к материалу'},403)
+                    pp=load(PUB/(pub+'.json'))
+                    used=used_materials(pp) if pp else set()
+                    mats=[m for m in mats if m['id'] in used]
             mat=next((m for m in mats if aid in (m.get('asset'),m.get('previewAsset'))),None)
             if not mat:return self.json({'error':'Материал не найден'},404)
             mime='application/pdf' if aid==mat.get('previewAsset') else mat.get('mime','application/octet-stream')
@@ -211,6 +306,8 @@ class Handler(BaseHTTPRequestHandler):
         if not static.is_relative_to((BASE/'static').resolve()):return self.json({'error':'Недопустимый путь'},403)
         self.file(static,mimetypes.guess_type(str(static))[0] or 'application/octet-stream')
     def file(self,path,mime,name=None,download=False):
+        try:mime,base_mime=checked_mime(mime)
+        except ValueError as e:return self.json({'error':str(e)},400)
         if not path.is_file():return self.json({'error':'Файл не найден'},404)
         size=path.stat().st_size;start=0;end=size-1;status=200
         range_header=self.headers.get('Range')
@@ -223,9 +320,9 @@ class Handler(BaseHTTPRequestHandler):
             status=206
         self.send_response(status);self.send_header('Content-Type',mime);self.send_header('Content-Length',str(max(0,end-start+1)));self.send_header('Accept-Ranges','bytes');self.send_header('X-Content-Type-Options','nosniff');self.send_header('Cache-Control','private, no-cache')
         if status==206:self.send_header('Content-Range',f'bytes {start}-{end}/{size}')
-        safe_inline=mime.startswith(('image/','video/','audio/')) or mime=='application/pdf'
+        safe_inline=base_mime.startswith(('image/','video/','audio/')) or base_mime=='application/pdf'
         if name:self.send_header('Content-Disposition',f"{'inline' if safe_inline and not download else 'attachment'}; filename*=UTF-8''{quote(name)}")
-        if name and mime=='image/svg+xml':self.send_header('Content-Security-Policy',"sandbox; default-src 'none'; style-src 'unsafe-inline'")
+        if base_mime=='image/svg+xml':self.send_header('Content-Security-Policy',"sandbox; default-src 'none'; style-src 'unsafe-inline'")
         self.end_headers()
         if self.command=='HEAD':return
         with path.open('rb') as f:
@@ -262,21 +359,10 @@ class Handler(BaseHTTPRequestHandler):
                     p['revision']=old.get('revision',0)+1
                     incoming=p.pop('materials',None)
                     deleted=p.pop('deletedMaterials',[])
-                    if not isinstance(deleted,list) or any(not isinstance(m,dict) or not isinstance(m.get('id'),str) or not isinstance(m.get('version'),int) or m['version']<1 for m in deleted):raise ValueError('Некорректный список удалённых источников')
-                    current={m['id']:m for m in load(DATA/'materials.json',[])}
-                    removed={m['id'] for m in deleted}
-                    if removed.intersection(m['id'] for m in incoming or []):raise ValueError('Источник одновременно сохранён и удалён')
-                    for m in deleted:
-                        prev=current.get(m['id'])
-                        if prev and m['version']<prev.get('version',1):return self.json({'error':'Источник обновлён в другом окне. Перезагрузите проект перед удалением.'},409)
-                    for m in incoming or []:
-                        prev=current.get(m['id'])
-                        if prev and m.get('version',1)<prev.get('version',1):return self.json({'error':'Материал обновлен в другом окне. Перезагрузите проект.'},409)
-                    for mid in removed:current.pop(mid,None)
-                    for m in incoming or []:current[m['id']]=m
-                    if incoming is not None or deleted:write(DATA/'materials.json',list(current.values()))
-                    write(DATA/'project.previous.json',old);write(DATA/'project.json',p)
-                return self.json({'revision':p['revision']})
+                    if not isinstance(deleted,list) or any(not isinstance(m,dict) or not isinstance(m.get('id'),str) or type(m.get('version')) is not int or m['version']<1 for m in deleted):raise ValueError('Некорректный список удалённых источников')
+                    mats=merge_materials(load(DATA/'materials.json',[]),incoming,deleted)
+                    commit_state(p,mats,old)
+                return self.json({'revision':p['revision'],'materialVersions':{m['id']:m.get('version',1) for m in mats}})
             if path=='/api/import':
                 p=import_drawio(self.body(20*1024*1024));return self.json(p)
             if path=='/api/materials' and method=='PUT':
@@ -285,12 +371,9 @@ class Handler(BaseHTTPRequestHandler):
                     link=m.get('url','')
                     if link and not (link.startswith(('https://','http://','data:page/id,'))):raise ValueError('Разрешены HTTP/HTTPS-ссылки или внутренние страницы')
                 with LOCK:
-                    current={m['id']:m for m in load(DATA/'materials.json',[])}
-                    for m in mats:
-                        if m['id'] in current and m.get('version',1)<current[m['id']].get('version',1):return self.json({'error':'Конфликт версии материала'},409)
-                        current[m['id']]=m
-                    write(DATA/'materials.json',list(current.values()))
-                return self.json({'ok':True})
+                    merged=merge_materials(load(DATA/'materials.json',[]),mats)
+                    revision=commit_materials(merged)
+                return self.json({'ok':True,'revision':revision,'materials':wire_materials(merged)})
             if path=='/api/upload':
                 name=self.headers.get('X-File-Name','file')
                 from urllib.parse import unquote
@@ -313,6 +396,9 @@ class Handler(BaseHTTPRequestHandler):
                 mat={'id':'m-'+uuid.uuid4().hex,'title':name,'kind':kind,'asset':aid,'filename':name,'mime':mime,'size':size,'version':1,'status':'Загружен'}
                 replace=self.headers.get('X-Replace-Material')
                 with LOCK:
+                    expected=self.headers.get('X-Project-Revision')
+                    if expected is not None and expected!=str(load(DATA/'project.json')['revision']):
+                        target.unlink(missing_ok=True);raise Conflict('Проект изменён в другом окне. Перезагрузите проект перед загрузкой.')
                     mats=load(DATA/'materials.json',[])
                     prev=next((m for m in mats if m['id']==replace),None)
                     if replace and not prev:raise ValueError('Материал для замены не найден')
@@ -320,11 +406,15 @@ class Handler(BaseHTTPRequestHandler):
                         mat['id']=prev['id'];mat['version']=prev.get('version',1)+1;mat['title']=prev['title'];mat['history']=prev.get('history',[])+[{k:prev.get(k) for k in ('asset','filename','version')}]
                         mats=[mat if m['id']==replace else m for m in mats]
                     else:mats.append(mat)
-                    write(DATA/'materials.json',mats)
-                return self.json(mat)
+                    revision=commit_materials(mats)
+                return self.json({**wire_materials([mat])[0],'projectRevision':revision})
             if path.startswith('/api/preview/'):
                 mid=path.rsplit('/',1)[1]
-                with LOCK:mat=next((m for m in load(DATA/'materials.json',[]) if m['id']==mid),None)
+                with LOCK:
+                    source_revision=load(DATA/'project.json')['revision']
+                    expected=self.headers.get('X-Project-Revision')
+                    if expected is not None and expected!=str(source_revision):raise Conflict('Проект изменён в другом окне')
+                    mat=next((m for m in load(DATA/'materials.json',[]) if m['id']==mid),None)
                 if not mat or not mat.get('asset'):raise ValueError('Сначала загрузите файл')
                 source_asset=mat['asset'];source_version=mat.get('version',1);source=asset_path(source_asset)
                 ext=Path(mat['filename']).suffix.lower()
@@ -342,16 +432,18 @@ class Handler(BaseHTTPRequestHandler):
                     if not pdf.exists():raise ValueError('Конвертер не создал PDF')
                     with LOCK:
                         mats=load(DATA/'materials.json',[]);current=next((m for m in mats if m['id']==mid),None)
+                        if load(DATA/'project.json')['revision']!=source_revision:raise Conflict('Проект изменён во время конвертации. Повторите создание превью.')
                         if not current or current.get('asset')!=source_asset or current.get('version',1)!=source_version:return self.json({'error':'Оригинал изменён во время конвертации. Повторите создание превью.'},409)
                         preview=uuid.uuid4().hex+'-preview';target=asset_path(preview);shutil.copyfile(pdf,target)
                         current['previewAsset']=preview;current['version']=source_version+1;mat=current
-                        write(DATA/'materials.json',mats)
-                return self.json(mat)
+                        revision=commit_materials(mats)
+                return self.json({**wire_materials([mat])[0],'projectRevision':revision})
             if path=='/api/publish':
                 with LOCK:
                     p=load(DATA/'project.json');pid=uuid.uuid4().hex;p['publishedAt']=time.time();p['publicationId']=pid;write(PUB/(pid+'.json'),p)
                 return self.json({'id':pid,'path':'/?view='+pid})
             return self.json({'error':'Неизвестный API'},404)
+        except Conflict as e:self.json({'error':str(e)},409)
         except (ValueError,KeyError,TypeError,json.JSONDecodeError) as e:self.json({'error':str(e)},400)
         except (BrokenPipeError,ConnectionResetError):pass
         except Exception as e:self.json({'error':str(e)},500)

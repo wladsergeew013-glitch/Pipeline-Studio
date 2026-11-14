@@ -79,4 +79,11 @@ class LocalTests(unittest.TestCase):
         link=self.command('link',data)[1];self.assertEqual(link['nativePath'],str(original));self.assertEqual(link['openKey'],self.files.open_key(original))
         self.assertEqual(self.command('pick',{})[1]['path'],'')
 
+    def test_28_html_size_limit_counts_utf8_bytes_and_preserves_existing_file(self):
+        target=self.root/'Limit.html';target.write_text('existing','utf8');self.picked=target;meta=self.command('pick-document',{})[1]
+        prefix='<script id="pipeline-document">'
+        text=prefix+'я'*((40*1024*1024-len(prefix))//2+1)
+        with self.assertRaises(ValueError):self.files.command('save',{'nativePath':str(target),'digest':meta['digest'],'text':text})
+        self.assertEqual(target.read_text('utf8'),'existing')
+
 if __name__=='__main__':unittest.main(verbosity=2)

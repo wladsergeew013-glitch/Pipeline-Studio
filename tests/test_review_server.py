@@ -1,5 +1,5 @@
 """Review regressions through real HTTP handlers and isolated synthetic files."""
-import concurrent.futures, importlib.util, json, os, subprocess, sys, tempfile, threading, unittest
+import base64, concurrent.futures, copy, importlib.util, io, json, os, subprocess, sys, tempfile, threading, unittest, zipfile, zlib
 from pathlib import Path
 from unittest.mock import patch
 from test_server import Client
@@ -112,5 +112,151 @@ class ReviewServerTests(unittest.TestCase):
         for p in [import_drawio(xml),self.editor.call('/api/import','POST',xml)[1],json.loads(result.read_text('utf8'))]:
             table=next(n['table'] for n in p['pages'][0]['nodes'] if n.get('table'))
             self.assertEqual([c['text'] for c in table['cells'][0]],['Left','Right']);self.assertEqual(table['widths'],[100,300])
+        structural=xml.replace(b'style="shape=table"',b'style="swimlane;childLayout=tableLayout"')
+        table=import_drawio(structural)['pages'][0]['nodes'][0]['table']
+        self.assertEqual([c['text'] for c in table['cells'][0]],['Left','Right'])
+
+    def test_09_material_updates_require_the_actual_base_version(self):
+        original=self.upload(b'OLD');stale=self.project()
+        replacement=self.upload(b'NEW',original['id'])
+        stale['revision']=self.project()['revision']
+        stale['materials'][0]['title']='stale rename';stale['materials'][0]['version']+=1
+        for route,body in [('/api/project',stale),('/api/materials',stale['materials'])]:
+            self.assertEqual(self.editor.call(route,'PUT',body)[0],409)
+            current=self.project()['materials'][0];self.assertEqual(current['asset'],replacement['asset'])
+        fresh=self.project();fresh['materials'][0]['title']='Current rename'
+        response=self.editor.call('/api/project','PUT',fresh);self.assertEqual(response[0],200,response)
+        current=self.project()['materials'][0];self.assertEqual(current['version'],3);self.assertEqual(current['baseVersion'],3)
+
+    def test_10_failed_state_commit_changes_neither_registry_nor_project(self):
+        self.upload();before=self.project();changed=copy.deepcopy(before);changed['title']='NEW';changed['materials'][0]['title']='NEW SOURCE'
+        original=self.s.os.replace
+        def fail(source,target):
+            if Path(target)==self.s.DATA/'state.json':raise OSError('controlled commit failure')
+            return original(source,target)
+        with patch.object(self.s.os,'replace',side_effect=fail):
+            self.assertEqual(self.editor.call('/api/project','PUT',changed)[0],500)
+        self.assertEqual(self.project(),before);self.assertFalse((self.s.DATA/'state.json.tmp').exists())
+
+    def test_11_backup_captures_one_generation_during_a_save(self):
+        self.upload();before=self.project();started=threading.Event();release=threading.Event();original=zipfile.ZipFile.writestr
+        def paused(z,name,*args,**kwargs):
+            result=original(z,name,*args,**kwargs)
+            if name=='project.json':started.set();self.assertTrue(release.wait(10))
+            return result
+        changed=copy.deepcopy(before);changed['title']='NEXT';changed['materials'][0]['title']='NEXT SOURCE'
+        with patch.object(zipfile.ZipFile,'writestr',paused),concurrent.futures.ThreadPoolExecutor() as pool:
+            backup=pool.submit(self.editor.call,'/api/backup');self.assertTrue(started.wait(5))
+            save=pool.submit(self.editor.call,'/api/project','PUT',changed);release.set()
+            code,data,_=backup.result(10);self.assertEqual(code,200);self.assertEqual(save.result(10)[0],200)
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            self.assertEqual(json.loads(z.read('project.json'))['title'],before['title'])
+            self.assertEqual(json.loads(z.read('materials.json'))[0]['title'],before['materials'][0]['title'])
+        with tempfile.TemporaryDirectory() as restored:
+            with zipfile.ZipFile(io.BytesIO(data)) as z:z.extractall(restored)
+            with patch.dict(os.environ,{'STUDIO_DATA':restored}):
+                spec=importlib.util.spec_from_file_location('restored_review_server',B/'app/server.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+            module.initialize()
+            self.assertTrue((Path(restored)/'state.json').is_file())
+            self.assertEqual(module.load(Path(restored)/'project.json')['title'],before['title'])
+            self.assertEqual(module.load(Path(restored)/'materials.json')[0]['asset'],before['materials'][0]['asset'])
+        self.assertEqual(self.project()['title'],'NEXT')
+
+    def test_12_mime_validation_and_parameterized_svg_sandbox(self):
+        uploaded=self.upload(b'<svg/>')
+        for value in ['image/svg+xml\r\nX-Injected: yes','image/svg+xml\n','bad',17,None,True,{},'image/svg+xml; bad']:
+            for route in ['/api/materials','/api/project']:
+                p=self.project();p['materials'][0]['mime']=value
+                body=p if route=='/api/project' else p['materials']
+                self.assertEqual(self.editor.call(route,'PUT',body)[0],400)
+        p=self.project();p['materials'][0]['mime']='Image/SVG+XML; charset="UTF-8"'
+        self.assertEqual(self.editor.call('/api/project','PUT',p)[0],200)
+        for method in ['GET','HEAD']:
+            code,_,headers=self.editor.call('/media/'+uploaded['asset'],method)
+            self.assertEqual(code,200);self.assertIn('sandbox',headers['Content-Security-Policy'])
+        for name in ['',None]:
+            p=self.project();p['materials'][0]['filename']=name
+            self.assertEqual(self.editor.call('/api/project','PUT',p)[0],200)
+            for method in ['GET','HEAD']:
+                code,_,headers=self.editor.call('/media/'+uploaded['asset'],method)
+                self.assertEqual(code,200);self.assertIn('sandbox',headers['Content-Security-Policy'])
+        # Unsafe historical state is also stopped before send_response/headers.
+        self.s.write(self.s.DATA/'materials.json',[{**uploaded,'mime':'image/svg+xml\r\nX-Injected: yes'}])
+        code,_,headers=self.editor.call('/media/'+uploaded['asset']);self.assertEqual(code,400);self.assertNotIn('X-Injected',headers)
+
+    def test_13_presentation_values_cannot_reach_html_as_markup(self):
+        for where in ['cell','bus','drawing','version','wordWrap','node']:
+            for value in ['13"><img src=x onerror=alert(1)>',False,{},float('inf')]:
+                p=self.project();pg=p['pages'][0]
+                if where=='cell':pg['nodes'][0]['table']={'cells':[[{'fontSize':value}]]}
+                elif where=='wordWrap':pg['nodes'][0]['table']={'cells':[[{'text':'OK'}]],'wordWrap':value}
+                elif where=='version':p['materials']=[{'id':'v','version':value}]
+                elif where=='node':pg['nodes'][0]['fontSize']=value
+                else:pg['buses' if where=='bus' else 'drawings']=[{'id':'bad','width':value}]
+                self.assertEqual(self.editor.call('/api/project','PUT',p)[0],400,(where,value))
+
+    def test_14_publication_includes_node_html_and_recursive_preview_dependencies(self):
+        a=self.upload(b'A');b=self.upload(b'B');c=self.upload(b'C');secret=self.upload(b'SECRET')
+        p=self.project();p['pages'][0]['nodes'][0]['html']='<a data-open-material="'+a['id']+'">Source</a>'
+        byid={m['id']:m for m in p['materials']};byid[a['id']]['previewMaterial']=b['id'];byid[b['id']]['previewMaterial']=c['id'];byid[c['id']]['previewMaterial']=a['id']
+        self.assertEqual(self.editor.call('/api/project','PUT',p)[0],200)
+        pub=self.editor.call('/api/publish','POST')[1]['id'];reader=Client(self.base);reader.call('/api/login','POST',{'password':'review-reader'})
+        published=reader.call('/api/published/'+pub)[1];ids={m['id'] for m in published['materials']}
+        self.assertTrue({a['id'],b['id'],c['id']}<=ids);self.assertNotIn(secret['id'],ids)
+        for m in [a,b,c]:self.assertEqual(reader.call('/media/'+m['asset']+'?view='+pub)[0],200)
+        self.assertEqual(reader.call('/media/'+secret['asset']+'?view='+pub)[0],404)
+
+    def test_15_session_reports_repository_version(self):
+        self.assertEqual(self.editor.call('/api/session')[1]['version'],(B/'VERSION').read_text().strip())
+
+    def test_16_import_encoding_dtd_and_aggregate_resource_boundaries(self):
+        import importer
+        xml='<mxfile><diagram><mxGraphModel><root><mxCell id="a" value="Привет &amp; мир" vertex="1"><mxGeometry width="100" height="50"/></mxCell></root></mxGraphModel></diagram></mxfile>'
+        for encoding in ['utf-8','utf-16','utf-16-be']:
+            declaration='<?xml version="1.0" encoding="'+('utf-8' if encoding=='utf-8' else 'utf-16')+'"?>'
+            raw=(declaration+xml).encode(encoding)
+            self.assertEqual(import_drawio(raw)['pages'][0]['nodes'][0]['title'],'Привет & мир')
+            evil=(declaration+'<!DOCTYPE mxfile [<!ENTITY x "EXPANDED">]>'+xml.replace('Привет &amp; мир','&x;')).encode(encoding)
+            self.assertEqual(self.editor.call('/api/import','POST',evil)[0],400)
+        def compressed(raw):
+            c=zlib.compressobj(wbits=-15);return base64.b64encode(c.compress(raw)+c.flush()).decode()
+        evil_page=b'<!DOCTYPE mxGraphModel [<!ENTITY x "EXPANDED">]><mxGraphModel><root><mxCell id="a" vertex="1" value="&x;"/></root></mxGraphModel>'
+        self.assertEqual(self.editor.call('/api/import','POST',('<mxfile><diagram>'+compressed(evil_page)+'</diagram></mxfile>').encode())[0],400)
+        page=('<mxGraphModel><root><mxCell id="a" value="'+'x'*4000+'"/></root></mxGraphModel>').encode()
+        container=('<mxfile>'+''.join('<diagram>'+compressed(page)+'</diagram>' for _ in range(3))+'</mxfile>').encode()
+        with patch.object(importer,'MAX_XML',10000):
+            self.assertLess(len(container),10000)
+            with self.assertRaises(ValueError):import_drawio(container)
+        for raw in [b'<mxfile><diagram>broken</diagram></mxfile>',b'<mxfile><diagram><broken></diagram></mxfile>',('<mxfile>'+'<diagram/>'*129+'</mxfile>').encode()]:
+            self.assertEqual(self.editor.call('/api/import','POST',raw)[0],400)
+        nested=('<a>'*130+'</a>'*130).encode()
+        with self.assertRaises(ValueError):import_drawio(nested)
+        duplicates=('<mxGraphModel><root>'+'<mxCell id="t" vertex="1" style="shape=table"/>'*100+'<mxCell id="c" parent="t" vertex="1" value="cell"/>'*100+'</root></mxGraphModel>').encode()
+        self.assertEqual(self.editor.call('/api/import','POST',duplicates)[0],400)
+        # Flat XML can still contain a deep semantic graph.
+        parents='<mxGraphModel><root>'+''.join('<mxCell id="n'+str(i)+'" parent="n'+str(i-1)+'" vertex="1"/>' for i in range(130))+'</root></mxGraphModel>'
+        with self.assertRaises(ValueError):import_drawio(parents.encode())
+        with patch.object(importer,'MAX_IMPORT_SECONDS',-1):
+            with self.assertRaisesRegex(ValueError,'время импорта'):import_drawio(xml.encode())
+        parse=importer.ImportBudget.parse
+        def expire_after_parse(budget,raw):
+            root=parse(budget,raw);budget.deadline=-1;return root
+        with patch.object(importer.ImportBudget,'parse',expire_after_parse):
+            with self.assertRaisesRegex(ValueError,'время импорта'):import_drawio(xml.encode())
+
+    def test_17_swimlane_children_and_both_arrow_ends_remain_semantic(self):
+        cells='<mxCell id="lane" value="Lane" style="swimlane" vertex="1"><mxGeometry x="10" y="20" width="400" height="300"/></mxCell>'
+        for ident,x in [('a',10),('b',200)]:
+            cells+='<mxCell id="'+ident+'" value="'+ident+'" vertex="1" parent="lane"><mxGeometry x="'+str(x)+'" y="70" width="100" height="50"/></mxCell>'
+        for i,(start,end) in enumerate([('none','none'),('classic','none'),('none','classic'),('classic','classic')]):
+            cells+='<mxCell id="e'+str(i)+'" edge="1" source="a" target="b" style="startArrow='+start+';endArrow='+end+'"><mxGeometry/></mxCell>'
+        imported=import_drawio(('<mxGraphModel><root>'+cells+'</root></mxGraphModel>').encode());p=imported['pages'][0]
+        self.assertEqual({n['id'] for n in p['nodes']},{'lane','a','b'});self.assertFalse(any(n.get('table') for n in p['nodes']))
+        self.assertEqual([(e['arrowStart'],e['arrow']) for e in p['edges']],[(False,False),(True,False),(False,True),(True,True)])
+        self.assertTrue(all(e['source']=='a' and e['target']=='b' for e in p['edges']))
+        self.assertEqual(imported['importReport'][0]['simplifications'][0]['id'],'lane')
+        malformed=import_drawio(('<mxGraphModel><root>'+cells.replace('style="swimlane"','style="shape=table"')+'</root></mxGraphModel>').encode())
+        self.assertEqual({n['id'] for n in malformed['pages'][0]['nodes']},{'lane','a','b'})
+        self.assertTrue(malformed['importReport'][0]['simplifications'])
 
 if __name__=='__main__':unittest.main(verbosity=2)

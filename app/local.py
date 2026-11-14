@@ -112,6 +112,7 @@ class LocalFiles:
             if str(p) not in self.grants or p.suffix.lower() not in ('.html','.htm'):raise PermissionError('Сначала выберите HTML для сохранения')
             text=data.get('text','')
             if not isinstance(text,str) or 'id="pipeline-document"' not in text:raise ValueError('Нужен HTML документа Studio')
+            if len(text.encode('utf8'))>40*1024*1024:raise ValueError('Документ превышает 40 МБ')
             with self.lock:
                 if p.exists() and hashlib.sha256(p.read_bytes()).hexdigest()!=data.get('digest'):raise FileExistsError('Исходный HTML изменён другим процессом. Используйте «Сохранить как».')
                 temp=p.with_name(p.name+'.studio-'+secrets.token_hex(5)+'.tmp')
@@ -138,7 +139,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get('Content-Type','').split(';')[0]!='application/json':return self.respond(415,{'error':'Нужен JSON'})
         try:
             size=int(self.headers.get('Content-Length','0'))
-            if not 0<size<=40*1024*1024:raise ValueError('Некорректный размер запроса')
+            if not 0<size<=6*40*1024*1024+65536:raise ValueError('Некорректный размер запроса')
             data=json.loads(self.rfile.read(size));route=urlsplit(self.path).path
             if not route.startswith('/native/'):raise ValueError('Неизвестная команда')
             result=self.server.files.command(route[8:],data);self.respond(200,result)

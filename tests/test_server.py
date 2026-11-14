@@ -160,7 +160,7 @@ class ServerTests(unittest.TestCase):
         m=self.upload('old-source.txt',b'OLD');p=self.project();revision=p['revision']
         p['materials']=[x for x in p['materials'] if x['id']!=m['id']]
         p['deletedMaterials']=[{'id':m['id'],'version':m['version']}]
-        replacement=self.upload('new-source.txt',b'NEW',m['id'])
+        replacement=self.upload('new-source.txt',b'NEW',m['id']);revision=self.project()['revision']
         self.assertEqual(self.editor.call('/api/project','PUT',p)[0],409)
         out=self.project();self.assertEqual(out['revision'],revision)
         self.assertEqual(next(x for x in out['materials'] if x['id']==m['id'])['asset'],replacement['asset'])

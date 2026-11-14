@@ -42,6 +42,10 @@ const read=file=>JSON.parse(fs.readFileSync(file,'utf8').match(/<script id="pipe
   await p.evaluate(()=>{Studio.state.selected=new Set(['a','b','c']);Studio.render()});await p.keyboard.press('Control+d');
   check('Packaged Ctrl+D creates separate original and copied combs',await p.evaluate(()=>{const pg=Studio.state.project.pages[0];return pg.nodes.length===6&&pg.buses.length===2&&pg.edges.filter(e=>e.bus===pg.buses[0].id).length===2&&pg.edges.filter(e=>e.bus===pg.buses[1].id).length===2}));
   await p.evaluate(()=>Studio.undo());check('Packaged duplication remains a single undo operation',await p.evaluate(()=>Studio.state.project.pages[0].nodes.length===3&&Studio.state.project.pages[0].buses.length===1));
+  const queuedA=path.join(author,'Reports/Queued.html'),queuedB=path.join(recipient,'Queued.html'),beforeSources=await p.evaluate(()=>Studio.state.project.materials.map(m=>[m.id,m.nativePath]));
+  await app.evaluate(({dialog},targets)=>{global.reviewTargets=targets;dialog.showSaveDialog=async()=>({canceled:false,filePath:global.reviewTargets.shift()})},[queuedA,queuedB]);
+  await p.evaluate(async()=>{await Promise.all([Studio.saveDocument(true),Studio.saveDocument(true)]);await Studio.saveDocument()});
+  check('R03 packaged overlapping Save As operations retain the exact sources through a third save',[queuedA,queuedB].every(file=>read(file).materials.every(m=>m.nativePath===beforeSources.find(([id])=>id===m.id)[1]))&&await p.evaluate(file=>Studio.document.nativePath===file&&!Studio.state.fileDirty,queuedB));
   check('Packaged review scenarios produce no JavaScript errors',errors.length===0);
  }finally{
   await app.evaluate(()=>{if(global.reviewRelease)global.reviewRelease();if(global.reviewWriteFile)process.getBuiltinModule('fs').promises.writeFile=global.reviewWriteFile}).catch(()=>{});
