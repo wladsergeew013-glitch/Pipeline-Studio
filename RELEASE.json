@@ -4,7 +4,7 @@
   "baseCommit": "74d0018fd23284f669e6e6e112e08bac3e37efea",
   "schemaVersion": 6,
   "publicRelease": true,
-  "status": "validated-candidate",
+  "status": "release-ready",
   "releaseDate": "2026-11-14",
   "validationDate": "2026-11-14",
   "report": "docs/REVIEW-0.7.21.md",
@@ -25,7 +25,8 @@
     "packagedReviewChecks": 23,
     "packagedDesktopChecks": 23,
     "dockerChecks": 2,
-    "portableTransferChecks": 3
+    "portableTransferChecks": 3,
+    "ci": "github-actions-required-before-merge"
   },
   "skippedReasons": [
     "Private working documents are not part of synthetic release checks"
