@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
+const os = require('node:os');
 const assert = require('node:assert/strict');
 const { spawn, execFileSync } = require('node:child_process');
 const { playwright } = require('./browser_runtime');
@@ -11,6 +12,9 @@ const original = process.env.STUDIO_PORTABLE_EXE || path.join(root, 'desktop/dis
 const diagnose = process.argv.includes('--diagnose');
 fs.mkdirSync(path.join(root, 'qa'), { recursive: true });
 const fixture = fs.mkdtempSync(path.join(root, 'qa/portable-transfer-'));
+// Exercise the launcher's normal Windows runtime environment independently
+// from delivery-folder synchronization, while keeping EXE/HTML in that folder.
+const runtimeFixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pipeline-portable-runtime-'));
 const delivery = path.join(fixture, 'Другой компьютер', 'dist');
 fs.mkdirSync(delivery, { recursive: true });
 const exe = path.join(delivery, path.basename(original));
@@ -57,7 +61,7 @@ async function inspector(port) {
 }
 
 async function runCase(label, lowerDrive = false) {
-  const base = path.join(fixture, label);
+  const base = path.join(runtimeFixture, label);
   const temp = path.join(base, 'Temp');
   fs.mkdirSync(temp, { recursive: true });
   const profile = path.join(base, 'profile');
@@ -137,6 +141,6 @@ async function runCase(label, lowerDrive = false) {
   await runCase('Профиль коллеги');
   await runCase('Профиль коллеги lowercase', true);
   await runCase("Профиль O'Connor # 100% тест");
-  fs.writeFileSync(path.join(root, 'qa', diagnose ? 'portable-transfer-before.json' : 'portable-transfer.json'), JSON.stringify({ version, fixture, results }, null, 2));
+  fs.writeFileSync(path.join(root, 'qa', diagnose ? 'portable-transfer-before.json' : 'portable-transfer.json'), JSON.stringify({ version, fixture, runtimeFixture, results }, null, 2));
   console.log('TOTAL', results.length);
 })().catch(error => { console.error(error); process.exitCode = 1; });

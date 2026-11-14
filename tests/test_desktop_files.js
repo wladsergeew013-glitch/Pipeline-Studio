@@ -23,5 +23,11 @@ const checks=[],ok=(name,value)=>{assert(value,name);checks.push(name);console.l
  await bridge.command('open',budgetData);ok('Opening a chosen external source cannot substitute a same-named neighbour',opens.at(-1).p===externalBudget);await bridge.command('folder',budgetData);ok('Source location uses the same selected external file',opens.at(-1).p===externalBudget&&opens.at(-1).folder);
  ok('Source inspection and signed link keep the same selected external identity',(await bridge.command('stat',budgetData)).nativePath===externalBudget&&new URL((await bridge.command('link',budgetData)).openURL).searchParams.get('path')===externalBudget);
  ok('A source without a document base has no fabricated portable basename',(await bridge.command('pick',{})).path==='');
+ const limitFile=path.join(root,'Limit.html');chosen=limitFile;const limitTarget=await bridge.command('pick-save',{}),prefix='<script id="pipeline-document">',limit=40*1024*1024;
+ const text=prefix+'я'.repeat(Math.floor((limit-Buffer.byteLength(prefix))/2))+(Buffer.byteLength(prefix)%2?'x':'');
+ assert.equal(Buffer.byteLength(text),limit);
+ const limitSaved=await bridge.command('save',{...limitTarget,text});ok('R11 a document at the UTF8 byte limit saves and can be reopened',(await bridge.command('read-document',limitSaved)).text===text);
+ ok('R11 a document over the UTF8 limit is rejected before writing',await reject(()=>bridge.command('save',{...limitSaved,text:text+'я'})));
+ ok('R11 an oversized save preserves the previous file',fs.statSync(limitFile).size===limit);
  }finally{fs.writeFileSync(path.join(B,'qa/desktop-files.json'),JSON.stringify({checks},null,2));assert(path.resolve(base).startsWith(path.resolve(B,'qa')+path.sep+'desktop-unit-'));fs.rmSync(base,{recursive:true,force:true});}console.log('TOTAL',checks.length);
 })().catch(e=>{console.error(e);process.exitCode=1});
