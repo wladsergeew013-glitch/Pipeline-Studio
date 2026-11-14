@@ -79,6 +79,7 @@ class LocalFiles:
         try:
             st=p.stat()
             if not p.is_file():return {**out,'state':'missing','detail':'По этому пути нет файла'}
+            if document and st.st_size>40*1024*1024:raise ValueError('Документ превышает 40 МБ')
             with p.open('rb') as readable:readable.read(1)
             out.update(state='ok',size=st.st_size,lastModified=int(st.st_mtime*1000),mime=mimetypes.guess_type(p.name)[0] or 'application/octet-stream',key=hashlib.sha256(str(p).encode()).hexdigest(),detail='Исходный файл найден на диске')
             if document:out['digest']=hashlib.sha256(p.read_bytes()).hexdigest()

@@ -259,4 +259,35 @@ class ReviewServerTests(unittest.TestCase):
         self.assertEqual({n['id'] for n in malformed['pages'][0]['nodes']},{'lane','a','b'})
         self.assertTrue(malformed['importReport'][0]['simplifications'])
 
+    def test_21_active_material_policy_does_not_depend_on_filename(self):
+        uploaded=self.upload(b'<html><script>window.materialRan=true</script></html>')
+        for route in ['/api/materials','/api/project']:
+            for name in ['',None,False,0,[],{},'normal.html']:
+                for mime in ['text/html','Text/HTML; charset="UTF-8"','application/xhtml+xml','application/xml']:
+                    with self.subTest(route=route,name=name,mime=mime):
+                        p=self.project();p['materials'][0].update(filename=name,mime=mime)
+                        body=p if route=='/api/project' else p['materials']
+                        self.assertEqual(self.editor.call(route,'PUT',body)[0],200)
+                        for method,headers in [('GET',{}),('HEAD',{}),('GET',{'Range':'bytes=0-9'})]:
+                            code,_,reply=self.editor.call('/media/'+uploaded['asset'],method,headers=headers)
+                            self.assertEqual(code,206 if headers else 200)
+                            self.assertTrue(reply.get('Content-Disposition','').startswith('attachment;'),reply)
+        # The same sink serves publication readers and legacy records loaded from disk.
+        p=self.project();p['pages'][0]['nodes'][0]['materials']=[uploaded['id']]
+        self.assertEqual(self.editor.call('/api/project','PUT',p)[0],200)
+        publication=self.editor.call('/api/publish','POST')[1]['id']
+        self.s.write(self.s.DATA/'materials.json',[{**uploaded,'filename':None,'mime':'text/html'}])
+        reader=Client(self.base);reader.call('/api/login','POST',{'password':'review-reader'})
+        code,_,headers=reader.call('/media/'+uploaded['asset']+'?view='+publication)
+        self.assertEqual(code,200);self.assertTrue(headers['Content-Disposition'].startswith('attachment;'))
+        self.assertEqual(reader.call('/media/'+uploaded['asset'])[0],403)
+        self.assertEqual(Client(self.base).call('/media/'+uploaded['asset'])[0],401)
+        for mime in ['application/pdf','image/png','audio/ogg','video/mp4']:
+            self.s.write(self.s.DATA/'materials.json',[{**uploaded,'filename':None,'mime':mime}])
+            self.assertTrue(self.editor.call('/media/'+uploaded['asset'])[2]['Content-Disposition'].startswith('inline;'))
+            self.assertTrue(self.editor.call('/media/'+uploaded['asset']+'?download=1')[2]['Content-Disposition'].startswith('attachment;'))
+        for static in ['/','/app.js','/style.css']:
+            code,_,headers=self.editor.call(static);self.assertEqual(code,200)
+            self.assertNotIn('Content-Disposition',headers)
+
 if __name__=='__main__':unittest.main(verbosity=2)

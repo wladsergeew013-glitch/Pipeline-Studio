@@ -516,11 +516,12 @@ function display(pg,collapsed=new Set(),compact=true,folded=new Set(),options={}
   // Never redirect one folded root to another root merely because they share hidden descendants.
   if(th&&state.roots.includes(e.source)&&state.sets.get(e.source)?.has(e.target))continue;
   if(sh&&state.roots.includes(e.target)&&state.sets.get(e.target)?.has(e.source))continue;
-  const proxy=sh||th,key=proxy?[source,target,e.arrow!==false,e.dashed===true,e.flow===false].join('|'):'edge:'+e.id;
-  if(dedupe.has(key)){const out=dedupe.get(key);out.count++;out.originalIds.push(e.id);continue;}
-  const rowOwner=sh&&rowState?.owners.get(e.source),rowNode=rowOwner?.row&&pg.nodes.find(n=>n.id===source),rowPort=rowNode&&C.ports(rowNode).find(p=>p.rowId===rowOwner.row&&p.side==='right');
-  const out={...e,source,target,sourcePort:sh?(rowPort?.id||'right'):e.sourcePort,targetPort:th?'left':e.targetPort,proxy,count:1,originalIds:[e.id]};
-  if(proxy){delete out.waypoints;delete out.points;delete out.bus;}edges.push(out);dedupe.set(key,out);
+  const proxy=sh||th,rowOwner=sh&&rowState?.owners.get(e.source),rowNode=rowOwner?.row&&pg.nodes.find(n=>n.id===source),rowPort=rowNode&&C.ports(rowNode).find(p=>p.rowId===rowOwner.row&&p.side==='right');
+   const sourcePort=sh?(rowPort?.id||'right'):e.sourcePort,targetPort=th?'left':e.targetPort;
+   const key=proxy?JSON.stringify([source,target,sourcePort||'right',targetPort||'left',e.arrowStart===true,e.arrow!==false,e.dashed===true,e.flow===false]):'edge:'+e.id;
+   if(dedupe.has(key)){const out=dedupe.get(key);out.count++;out.originalIds.push(e.id);continue;}
+   const out={...e,source,target,sourcePort,targetPort,proxy,count:1,originalIds:[e.id]};
+   if(proxy){delete out.waypoints;delete out.points;delete out.bus;}edges.push(out);dedupe.set(key,out);
  }
  return {nodes,edges,frames:[],map,hidden:state.hidden,hiddenOwner:state.owner,collapseState:state,buses:pg.buses||[],layoutOffsets:layout.offsets,layoutConflicts:layout.conflicts,units:layout.units};
 }
@@ -735,7 +736,7 @@ function moveEdgeSegment(e,ns,index,delta){
  return saveManualRoute(e,orthogonalize(ps),ps[0]);
 }
 function busCandidates(pg,ids){return prev.busCandidates(pg,ids);}
-function cleanBuses(p){p.buses=(p.buses||[]).filter(b=>p.edges.filter(e=>e.bus===b.id).length>=2);const ids=new Set(p.buses.map(b=>b.id));for(const e of p.edges)if(e.bus&&!ids.has(e.bus))delete e.bus;return p;}
+function cleanBuses(p,base=null){p.buses=(p.buses||[]).filter(b=>p.edges.filter(e=>e.bus===b.id).length>=2);const ids=new Set(p.buses.map(b=>b.id));for(const e of p.edges)if(e.bus&&!ids.has(e.bus))delete e.bus;if(base)C.assertProtectedMembership(base,p);return p;}
 function upgradeBus(p,b){const ids=p.edges.filter(e=>e.bus===b.id).map(e=>e.id),cs=busCandidates(p,ids);const valid=cs.find(c=>c.mode===b.mode&&c.hub===b.hub);if(!valid){b.mode='free';delete b.hub;delete b.port;b.orientation=b.orientation||'vertical';}else b.port=valid.port;return b;}
 function combineEdges(pg,ids,requested='auto'){
  const selected=new Set(ids),busIds=new Set(pg.edges.filter(e=>selected.has(e.id)&&e.bus).map(e=>e.bus));for(const e of pg.edges)if(busIds.has(e.bus))selected.add(e.id);const unique=[...selected],es=pg.edges.filter(e=>selected.has(e.id));if(es.length<2)throw Error('Выберите минимум две связи');
@@ -744,12 +745,12 @@ function combineEdges(pg,ids,requested='auto'){
  // Joining existing bus preserves its identity and geometry; no second entity type.
   const previousIds=[...new Set(ids.map(id=>pg.edges.find(e=>e.id===id)?.bus).filter(Boolean))];let b=previousIds.length?p.buses.find(b=>b.id===previousIds[0]):null;
  if(!b){b={id:C.uid('bus'),title:'Гребёнка',mode:choice?.mode||'free',orientation:'vertical',offset:70};if(choice){b.hub=choice.hub;b.port=choice.port;}p.buses.push(b);}
- for(const e of p.edges)if(unique.includes(e.id))e.bus=b.id;upgradeBus(p,b);return cleanBuses(p);
+ for(const e of p.edges)if(unique.includes(e.id))e.bus=b.id;upgradeBus(p,b);return cleanBuses(p,pg);
 }
 function joinBus(pg,id,edgeIds){const p=C.clone(pg),b=p.buses?.find(b=>b.id===id);if(!b)throw Error('Гребёнка не найдена');
  if(b.editLocked)throw Error('Гребёнка защищена от правки');
  for(const id of new Set(edgeIds)){const e=p.edges.find(e=>e.id===id);if(!e)throw Error('Связь не найдена');if(e.editLocked||p.buses.find(x=>x.id===e.bus)?.editLocked)throw Error('Связь или исходная гребёнка защищена от правки');e.bus=b.id;}
- upgradeBus(p,b);return cleanBuses(p);
+ upgradeBus(p,b);return cleanBuses(p,pg);
 }
 function terminalTap(tip,axis,vertical,node){
  const v=vec[tip.side]||vec.right,projection=vertical?(axis-tip.x)*v.x:(axis-tip.y)*v.y,clearance=projection>0?Math.min(24,projection):24,stub={x:tip.x+v.x*clearance,y:tip.y+v.y*clearance};
@@ -1087,7 +1088,7 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
   const out=C.clone(project);out.materials=out.materials.filter(m=>m.id!==id);
   for(const m of out.materials)if(m.previewMaterial===id)delete m.previewMaterial;
   for(const pg of out.pages)for(const n of pg.nodes){n.materials=(n.materials||[]).filter(x=>x!==id);if(n.html)n.html=unlinkHTML(n.html,id);for(const row of n.table?.cells||[])for(const cell of row){if(!cell)continue;if(cell.material===id)delete cell.material;if(cell.materials)cell.materials=cell.materials.filter(x=>x!==id);if(cell.sourceOptions)delete cell.sourceOptions[id];if(cell.html)cell.html=unlinkHTML(cell.html,id);}}
-  out.deletedMaterials=[...(out.deletedMaterials||[]).filter(x=>x.id!==id),{id,version:material.version||1}];return out;
+  out.deletedMaterials=[...(out.deletedMaterials||[]).filter(x=>x.id!==id),{id,version:material.baseVersion??material.version??1}];return out;
  }
  Object.assign(C,{removeMaterial});
 })(globalThis.Core);
@@ -1153,7 +1154,7 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
   const path=points=>points.length&&(contain?points.every(inside):points.some((p,i)=>i&&segment(points[i-1],p))),nodes=new Set(d.nodes.filter(n=>n.type!=='summary'&&box(n)).map(n=>n.id)),edges=new Set(),drawings=new Set(),buses=new Set(),ns=new Map(d.nodes.map(n=>[n.id,n])),bundle=C.bundleRoutes(d);for(const e of d.edges)if(!e.proxy&&path(bundle.routes.get(e.id)?.points||C.edgePath(e,ns)?.points||[]))edges.add(e.id);for(const b of bundle.buses){const parts=[b.lead,b.trunk,...(b.segments||[]),...d.edges.filter(e=>e.bus===b.id).map(e=>bundle.routes.get(e.id))].filter(p=>p?.points?.length);if(parts.length&&(contain?parts.every(p=>path(p.points)):parts.some(p=>path(p.points)))){buses.add(b.id);for(const e of d.edges)if(e.bus===b.id)edges.delete(e.id);}}
   for(const drawing of pg.drawings||[]){const host=drawing.anchor&&ns.get(drawing.anchor);if(drawing.anchor&&!host)continue;const points=(drawing.points||[]).map(p=>({x:p.x+(host?.x||0),y:p.y+(host?.y||0)}));if(['rect','ellipse'].includes(drawing.type)&&points.length>1){const a=points[0],b=points.at(-1);if(box({x:Math.min(a.x,b.x),y:Math.min(a.y,b.y),w:Math.abs(a.x-b.x),h:Math.abs(a.y-b.y)}))drawings.add(drawing.id);}else if(path(points))drawings.add(drawing.id);}return {nodes,edges,drawings,buses};
  }
- function bulkPatch(pg,selection,patch,category='all'){const out=C.clone(pg);for(const [list,kind] of [['nodes','node'],['edges','edge'],['buses','bus'],['drawings','drawing']])for(const item of out[list]||[]){if(!(selection[kind]||[]).includes(item.id)||(category!=='all'&&category!==(kind==='node'?item.type:kind)))continue;if(item.editLocked&&!Object.hasOwn(patch,'editLocked'))continue;for(const [key,value] of Object.entries(patch)){const allowed={node:['editLocked','color','fill','fontSize','relativeLock','collapsible','locked','autoSize','tableAutoSize','tableWordWrap','branchSymmetry','branchGap'],edge:['editLocked','color','arrow','arrowStart','dashed','parentRole','style','labelCentered'],bus:['editLocked','color','symmetry','alignGap','style'],drawing:['editLocked','color','width']};if(!allowed[kind].includes(key)||(key.startsWith('branch')&&item.type!=='decision')||(key.startsWith('table')&&!item.table))continue;if(key==='color'){item[kind==='drawing'?'color':kind==='node'?'stroke':'stroke']=value;}else if(key==='tableAutoSize'&&item.table)C.setTableAutoSize(item,value);else if(key==='tableWordWrap'&&item.table)item.table.wordWrap=value;else if(key==='symmetry'&&kind==='bus'){item.symmetry=value;item.autoAlign=value;}else if(key==='autoSize'&&kind==='node'){if(value){item.autoBaseW=item.w;item.autoBaseH=item.h;}item.autoSize=value;}else item[key]=value;}}return out;}
+ function bulkPatch(pg,selection,patch,category='all'){const out=C.clone(pg);for(const [list,kind] of [['nodes','node'],['edges','edge'],['buses','bus'],['drawings','drawing']])for(const item of out[list]||[]){if(!(selection[kind]||[]).includes(item.id)||(category!=='all'&&category!==(kind==='node'?item.type:kind)))continue;if((item.editLocked&&!Object.hasOwn(patch,'editLocked'))||(kind==='edge'&&out.buses?.find(b=>b.id===item.bus)?.editLocked))continue;for(const [key,value] of Object.entries(patch)){const allowed={node:['editLocked','color','fill','fontSize','relativeLock','collapsible','locked','autoSize','tableAutoSize','tableWordWrap','branchSymmetry','branchGap'],edge:['editLocked','color','arrow','arrowStart','dashed','parentRole','style','labelCentered'],bus:['editLocked','color','symmetry','alignGap','style'],drawing:['editLocked','color','width']};if(!allowed[kind].includes(key)||(key.startsWith('branch')&&item.type!=='decision')||(key.startsWith('table')&&!item.table))continue;if(key==='color'){item[kind==='drawing'?'color':kind==='node'?'stroke':'stroke']=value;}else if(key==='tableAutoSize'&&item.table)C.setTableAutoSize(item,value);else if(key==='tableWordWrap'&&item.table)item.table.wordWrap=value;else if(key==='symmetry'&&kind==='bus'){item.symmetry=value;item.autoAlign=value;}else if(key==='autoSize'&&kind==='node'){if(value){item.autoBaseW=item.w;item.autoBaseH=item.h;}item.autoSize=value;}else item[key]=value;}}return out;}
  Object.assign(C,{edgeRelationship,relativeDescendantsGraph,normalizeV6,display,dragPlan,rectangleHits,bulkPatch,combSymmetry});
 })(globalThis.Core);
 
@@ -1168,7 +1169,7 @@ Core.deleteSelection=function(pg,selection){
  for(const b of pg.buses||[])if(b.editLocked){buses.delete(b.id);for(const e of pg.edges.filter(e=>e.bus===b.id)){edges.delete(e.id);keep(e.source);keep(e.target);}}
  for(const id of required)nodes.delete(id);
  let added=true;while(added){added=false;for(const n of pg.nodes)if(n.anchorId&&nodes.has(n.anchorId)&&!nodes.has(n.id)&&!required.has(n.id)){nodes.add(n.id);added=true;}}
- const out=Core.clone(pg);out.nodes=out.nodes.filter(n=>!nodes.has(n.id));out.edges=out.edges.filter(e=>!edges.has(e.id)&&!nodes.has(e.source)&&!nodes.has(e.target));out.drawings=(out.drawings||[]).filter(d=>!drawings.has(d.id)&&!nodes.has(d.anchor));out.groups?.forEach(g=>g.members=g.members.filter(id=>!nodes.has(id)));out.buses=(out.buses||[]).filter(b=>!buses.has(b.id));for(const e of out.edges)if(buses.has(e.bus))delete e.bus;Core.cleanBuses(out);return JSON.stringify(out)===JSON.stringify(pg)?pg:out;
+ const out=Core.clone(pg);out.nodes=out.nodes.filter(n=>!nodes.has(n.id));out.edges=out.edges.filter(e=>!edges.has(e.id)&&!nodes.has(e.source)&&!nodes.has(e.target));out.drawings=(out.drawings||[]).filter(d=>!drawings.has(d.id)&&!nodes.has(d.anchor));out.groups?.forEach(g=>g.members=g.members.filter(id=>!nodes.has(id)));out.buses=(out.buses||[]).filter(b=>!buses.has(b.id));for(const e of out.edges)if(buses.has(e.bus))delete e.bus;Core.cleanBuses(out,pg);return JSON.stringify(out)===JSON.stringify(pg)?pg:out;
 };
 
 (function(C){const arrange=C.arrange,autoLayout=C.autoLayout;
@@ -1652,7 +1653,7 @@ Core.duplicateSelection=function(pg,selection){
  }
  function bulkPatch(pg,selection,patch,category='all'){
   const out=C.clone(pg),allowed={node:['title','fill','color','textColor','stroke','fontSize','bold','italic','align','w','h','autoSize','relativeLock','collapsible','collapseBoundary','locked','editLocked','branchSymmetry','branchGap','branchCrossings','type','tableAutoSize','tableWordWrap','tableBodyPosition'],edge:['label','color','stroke','width','labelColor','fontSize','arrow','arrowStart','dashed','style','parentRole','labelCentered','editLocked'],bus:['title','color','stroke','width','dashed','style','symmetry','alignGap','orientation','allowCrossings','moveTogether','editLocked'],drawing:['color','width','editLocked']};
-  for(const [list,kind] of [['nodes','node'],['edges','edge'],['buses','bus'],['drawings','drawing']])for(const item of out[list]||[]){if(!(selection[kind]||[]).includes(item.id)||(category!=='all'&&category!==kind&&category!==(kind==='node'?item.type:kind)))continue;if(item.editLocked&&!Object.hasOwn(patch,'editLocked'))continue;
+  for(const [list,kind] of [['nodes','node'],['edges','edge'],['buses','bus'],['drawings','drawing']])for(const item of out[list]||[]){if(!(selection[kind]||[]).includes(item.id)||(category!=='all'&&category!==kind&&category!==(kind==='node'?item.type:kind)))continue;if((item.editLocked&&!Object.hasOwn(patch,'editLocked'))||(kind==='edge'&&out.buses?.find(b=>b.id===item.bus)?.editLocked))continue;
    for(const [key,value] of Object.entries(patch)){if(!allowed[kind].includes(key))continue;if(kind==='node'&&item.locked&&['w','h','autoSize','tableAutoSize'].includes(key))continue;if(key==='tableBodyPosition'&&!['center','header'].includes(value))throw Error('Некорректное положение портов таблицы');if(key.startsWith('branch')&&item.type!=='decision'||key.startsWith('table')&&!item.table)continue;
     if(key==='title'){item.title=value;delete item.html;}else if(key==='color')item[kind==='drawing'?'color':'stroke']=value;else if(key==='textColor')item.color=value;
     else if(key==='type'){if(['block','decision','comment','note'].includes(item.type)&&['block','decision','comment'].includes(value)&&!item.table)item.type=value;}
@@ -1660,7 +1661,7 @@ Core.duplicateSelection=function(pg,selection){
     else if(key==='symmetry'){item.symmetry=item.autoAlign=value;out.symmetrySets=(out.symmetrySets||[]).filter(s=>!s.edges.every(id=>out.edges.find(e=>e.id===id)?.bus===item.id));}
     else{if(key==='autoSize'&&value){item.autoBaseW=item.w;item.autoBaseH=item.h;}item[key]=value;if(key==='parentRole')item.flow=value!=='none';}
    }
-  }return out;
+  }C.validatePresentation({pages:[out]});return out;
  }
  const labelPlacement=(edge,route)=>{const p=prev.labelPlacement(edge,route);return {...p,x:p.x+(edge.labelOffsetX||0),y:p.y+(edge.labelOffsetY||0)};};
  Object.assign(C,{display,dragPlan,prepareMove,moveNodes,setEdgeSymmetry,updateSymmetry,releaseSymmetry,coupledRoots,expandedFolds,normalizeV6,convertNode,bulkPatch,labelPlacement,geometryConflicts,routeEditAllowed,busGeometryConflicts,busEditAllowed});
@@ -1694,6 +1695,8 @@ Core.preflightTableChange=function(pg,id,table){
  return {ports,removed};
 };
 
+// The editor and loader share these presentation limits.
+Core.presentationRanges={fontSize:[1,1000],width:[0,1000]};
 // Validate values before any legacy coercion or interpolation into HTML/SVG.
 Core.validatePresentation=function(project){
  const number=(obj,key,min,max,legacyString=false)=>{
@@ -1706,13 +1709,13 @@ Core.validatePresentation=function(project){
  for(const m of project.materials||[])if(m.version!==undefined&&(!Number.isSafeInteger(m.version)||m.version<1))throw Error('Некорректная версия материала');
  for(const pg of project.pages||[]){
   for(const n of pg.nodes||[]){
-   number(n,'fontSize',1,1000,true);
+   number(n,'fontSize',...Core.presentationRanges.fontSize,true);
    if(n.table){
     if(n.table.wordWrap!==undefined&&!['words','hyphenate'].includes(n.table.wordWrap))throw Error('Некорректный перенос слов');
-    for(const row of n.table.cells||[])for(const cell of row)if(cell)number(cell,'fontSize',1,1000);
+    for(const row of n.table.cells||[])for(const cell of row)if(cell)number(cell,'fontSize',...Core.presentationRanges.fontSize);
    }
   }
-  for(const item of [...pg.edges||[],...pg.buses||[],...pg.drawings||[]]){number(item,'width',0,1000);number(item,'fontSize',1,1000);}
+  for(const item of [...pg.edges||[],...pg.buses||[],...pg.drawings||[]]){number(item,'width',...Core.presentationRanges.width);number(item,'fontSize',...Core.presentationRanges.fontSize);}
  }
  return project;
 };
@@ -1720,3 +1723,13 @@ Core.validatePresentation=function(project){
  const normalize=Core.normalizeV6;
  Core.normalizeV6=p=>normalize(Core.validatePresentation(p));
 }
+
+// Edit protection includes comb membership, including indirect 2 -> 1 cleanup.
+Core.assertProtectedMembership=function(base,out){
+ const buses=new Map((base.buses||[]).map(b=>[b.id,b])),nextBuses=new Map((out.buses||[]).map(b=>[b.id,b])),edges=new Map(out.edges.map(e=>[e.id,e]));
+ for(const e of base.edges){const next=edges.get(e.id),protectedEdge=e.editLocked&&next?.editLocked!==false,protectedBus=buses.get(e.bus)?.editLocked&&nextBuses.get(e.bus)?.editLocked!==false;
+  if((protectedEdge||protectedBus)&&(!next||next.bus!==e.bus))throw Error('Изменение затрагивает членство защищённой связи в гребёнке');
+ }
+ for(const b of base.buses||[])if(b.editLocked&&nextBuses.get(b.id)?.editLocked!==false){const before=base.edges.filter(e=>e.bus===b.id).map(e=>e.id).sort(),after=out.edges.filter(e=>e.bus===b.id).map(e=>e.id).sort();if(JSON.stringify(before)!==JSON.stringify(after))throw Error('Гребёнка защищена от правки');}
+ return out;
+};

@@ -17,6 +17,8 @@ def entries(root):
     return rows
 
 def main():
+    from release_metadata import check
+    check(ROOT)
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--write',action='store_true');args=parser.parse_args()
     rows=entries(ROOT)
     if args.write:

@@ -51,13 +51,30 @@ function samplePDF(){
   await p.evaluate(async({word,preview})=>{Studio.change(()=>Studio.state.project.materials.push({id:'native-preview-only',title:'Native Word preview',kind:'document',nativePath:word,previewNativePath:preview,version:1}));await Studio.openMaterial('native-preview-only')},{word,preview});
   check('R17 packaged Word viewer opens the real PDF when only previewNativePath is present',await p.locator('.modal iframe').getAttribute('src')===pathToFileURL(preview).href&&await p.evaluate(async()=>{const rows=await Studio.checkAllMaterials({network:false});return rows.filter(r=>r.id==='native-preview-only').length===2&&rows.filter(r=>r.id==='native-preview-only').every(r=>r.state==='ok')}));
   await p.locator('.modal [data-close]').first().click();
+  await p.evaluate(async()=>{Studio.change(()=>Studio.state.project.materials.find(m=>m.id==='native-preview-only').nativePath+='-missing.docx');await Studio.openMaterial('native-preview-only')});
+  check('N15 packaged viewer keeps a valid PDF preview when its original is missing',await p.locator('.modal iframe').getAttribute('src')===pathToFileURL(preview).href&&(await p.locator('.modal-content').innerText()).includes('Оригинал недоступен'));
+  await p.locator('.modal [data-close]').first().click();
   const queuedA=path.join(author,'Reports/Queued.html'),queuedB=path.join(recipient,'Queued.html'),beforeSources=await p.evaluate(()=>Studio.state.project.materials.map(m=>[m.id,m.nativePath]));
   await app.evaluate(({dialog},targets)=>{global.reviewTargets=targets;dialog.showSaveDialog=async()=>({canceled:false,filePath:global.reviewTargets.shift()})},[queuedA,queuedB]);
   await p.evaluate(async()=>{await Promise.all([Studio.saveDocument(true),Studio.saveDocument(true)]);await Studio.saveDocument()});
   check('R03 packaged overlapping Save As operations retain the exact sources through a third save',[queuedA,queuedB].every(file=>read(file).materials.every(m=>m.nativePath===beforeSources.find(([id])=>id===m.id)[1]))&&await p.evaluate(file=>Studio.document.nativePath===file&&!Studio.state.fileDirty,queuedB));
+  const slow=path.join(author,'Slow.json'),fast=path.join(recipient,'Fast.json');fs.writeFileSync(slow,JSON.stringify({...fixture(),title:'SLOW A'}));fs.writeFileSync(fast,JSON.stringify({...fixture(),title:'LATEST B'}));
+  for(const uiWins of [false,true]){
+   await app.evaluate(({app},{slow})=>{const fs=process.getBuiltinModule('fs');global.reviewOriginalStat=fs.promises.stat;global.reviewSlowStarted=false;global.reviewSlowDone=false;fs.promises.stat=async function(file,...args){if(String(file)===slow&&!global.reviewSlowDone){global.reviewSlowStarted=true;await new Promise(r=>global.reviewReleaseStat=r);global.reviewSlowDone=true}return global.reviewOriginalStat.call(this,file,...args)};app.emit('second-instance',{},[slow])},{slow});
+   const deadline=Date.now()+15000;while(!await app.evaluate(()=>global.reviewSlowStarted)){if(Date.now()>deadline)throw Error('slow native open did not start');await new Promise(r=>setTimeout(r,25))}
+   if(uiWins){await p.evaluate(()=>Studio.closeProject());await app.evaluate(({dialog},file)=>{global.reviewPick=file;dialog.showOpenDialog=async()=>({canceled:false,filePaths:[global.reviewPick]})},fast);await p.locator('#home-open').click()}
+   else await app.evaluate(({app},file)=>app.emit('second-instance',{},[file]),fast);
+   await p.waitForFunction(()=>Studio.state.project?.title==='LATEST B');await app.evaluate(()=>{global.reviewReleaseStat();process.getBuiltinModule('fs').promises.stat=global.reviewOriginalStat});await new Promise(r=>setTimeout(r,250));
+   check('N13 packaged slow external open cannot replace '+(uiWins?'the newer UI picker':'the newer external request'),await p.evaluate(()=>Studio.state.project.title==='LATEST B'));
+  }
+  const keyboardTarget=path.join(recipient,'Keyboard.html');await app.evaluate(({dialog},file)=>{dialog.showSaveDialog=async()=>({canceled:false,filePath:file})},keyboardTarget);
+  await p.evaluate(()=>{Studio.change(()=>Studio.state.project.pages[0].edges[0].label='EXE OLD');Studio.state.selectedEdge='ab';Studio.state.selectedEdges=new Set(['ab']);Studio.render();Studio.fit()});await p.locator('.edge-label[data-edge="ab"]').dblclick();await p.locator('#quick-edge-label').fill('EXE QUICK SAVED');await p.locator('#quick-edge-label').press('Control+s');await p.waitForFunction(()=>!Studio.state.fileDirty);
+  check('N12 packaged Ctrl+S from quick-label input writes the visible label to disk',read(keyboardTarget).pages[0].edges[0].label==='EXE QUICK SAVED');
+  await p.evaluate(()=>{Studio.state.selectedEdge=null;Studio.state.selectedEdges.clear();Studio.state.selected=new Set(['a']);Studio.render()});await p.locator('#node-title').fill('EXE INSPECTOR SAVED');await p.locator('#node-title').press('Control+s');await p.waitForFunction(()=>!Studio.state.fileDirty);
+  check('N05 packaged Ctrl+S without blur writes the inspector title to disk',read(keyboardTarget).pages[0].nodes[0].title==='EXE INSPECTOR SAVED');
   check('Packaged review scenarios produce no JavaScript errors',errors.length===0);
  }finally{
-  await app.evaluate(()=>{if(global.reviewRelease)global.reviewRelease();if(global.reviewWriteFile)process.getBuiltinModule('fs').promises.writeFile=global.reviewWriteFile}).catch(()=>{});
+  await app.evaluate(()=>{if(global.reviewRelease)global.reviewRelease();if(global.reviewReleaseStat)global.reviewReleaseStat();if(global.reviewOriginalStat)process.getBuiltinModule('fs').promises.stat=global.reviewOriginalStat;if(global.reviewWriteFile)process.getBuiltinModule('fs').promises.writeFile=global.reviewWriteFile}).catch(()=>{});
   if(!p.isClosed())await p.evaluate(()=>{Studio.state.dirty=false;Studio.state.fileDirty=false});await app.close();fs.writeFileSync(path.join(B,'qa/browser-review-desktop.json'),JSON.stringify({checks,errors},null,2));assert(base.startsWith(path.join(B,'qa')+path.sep+'review-desktop-'));fs.rmSync(base,{recursive:true,force:true});
  }
  console.log('TOTAL',checks.length);

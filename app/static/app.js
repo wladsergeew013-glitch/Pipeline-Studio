@@ -1,4 +1,4 @@
-/* Pipeline Studio 0.7.20 — browser editor and publication viewer.
+/* Pipeline Studio 0.7.21 — browser editor and publication viewer.
    No external scripts, fonts, analytics or cloud viewers are loaded.
    Persistence is either the local Python server, or IndexedDB in portable mode. */
 'use strict';
@@ -24,7 +24,12 @@ function dbPut(key,val){if(!DB){volatileStore.set(key,val);return Promise.resolv
 const dataURL=blob=>new Promise((res,rej)=>{const f=new FileReader();f.onload=()=>res(f.result);f.onerror=()=>rej(f.error);f.readAsDataURL(blob);});
 function dataBlob(url){const [meta,s]=url.split(',');const str=atob(s),buf=new Uint8Array(str.length);for(let i=0;i<str.length;i++)buf[i]=str.charCodeAt(i);return new Blob([buf],{type:meta.match(/^data:([^;]+)/)?.[1]||'application/octet-stream'});}
 function legacyCheckpoint(){if(S.readOnly)return;S.history.push(C.clone(S.project));if(S.history.length>50)S.history.shift();S.redo=[];}
-function change(fn){if(S.readOnly)return;checkpoint();fn();changed();render();}
+function change(fn){
+ if(S.readOnly)return;const before=historySnapshot(),view=S.project.viewState,hasView=Object.hasOwn(S.project,'viewState'),selection={pageIndex:S.pageIndex,selected:new Set(S.selected),selectedEdges:new Set(S.selectedEdges),selectedDrawings:new Set(S.selectedDrawings||[]),selectedBuses:new Set(S.selectedBuses||[]),selectedEdge:S.selectedEdge,selectedBus:S.selectedBus,selectedDrawing:S.selectedDrawing};
+ try{fn();C.validatePresentation(S.project);for(const pg of before.pages){const next=S.project.pages.find(p=>p.id===pg.id);if(next)C.assertProtectedMembership(pg,next);}}
+ catch(err){S.project=before;if(hasView)S.project.viewState=view;else delete S.project.viewState;Object.assign(S,selection);render();throw err;}
+ S.history.push(before);if(S.history.length>80)S.history.shift();S.redo=[];changed();render();
+}
 function legacyChanged(){S.dirty=true;S.editVersion++;clearTimeout(saveTimer);saveTimer=setTimeout(()=>save().catch(e=>toast(e.message,7000)),750);updateStatus();}
 function legacyUpdateStatus(){const el=$('#save-status');if(el)el.textContent=S.readOnly?(S.pub?'Опубликованная версия · только просмотр':'Предпросмотр · изменения отключены'):S.saving?'Сохраняю…':S.dirty?'Есть несохранённые изменения':(S.server?'Сохранено на сервере':S.volatile?'Временная сессия: выгрузите JSON':'Сохранено в этом браузере')+' · ред. '+(S.project?.revision||0);}
 async function legacySave(){
@@ -157,7 +162,7 @@ function v4SetTool(t){if(S.readOnly&&!['select','pan'].includes(t))return;if(t==
 async function legacyOnAppClick(e){
  try{
   const tool=e.target.closest('[data-tool]');if(tool)return setTool(tool.dataset.tool);
-  const pp=e.target.closest('[data-page]');if(pp){S.pageIndex=Number(pp.dataset.page);S.selected.clear();S.selectedEdge=null;S.selectedDrawing=null;S.selectedDrawings?.clear();S.selectedBuses?.clear();S.search='';render();fit();return;}
+  const pp=e.target.closest('[data-page]');if(pp){switchPage(Number(pp.dataset.page));S.selected.clear();S.selectedEdge=null;S.selectedDrawing=null;S.selectedDrawings?.clear();S.selectedBuses?.clear();S.search='';render();fit();return;}
   const ge=e.target.closest('[data-edit-group]');if(ge)return groupEditor(ge.dataset.editGroup);const tg=e.target.closest('[data-toggle-group]');if(tg)return toggleGroup(tg.dataset.toggleGroup);
   const focus=e.target.closest('[data-focus]');if(focus)return focusNode(focus.dataset.focus);
   const om=e.target.closest('[data-open-material]');if(om)return openMaterial(om.dataset.openMaterial);
@@ -176,7 +181,7 @@ async function legacyAction(a){
  if(a==='preview'){if(S.locked)return;if(!S.readOnly)await save();S.readOnly=!S.readOnly;S.tool='select';render();return;}
  if(a==='expand-all'){collapsed().clear();render();fit();return;}if(a==='collapse-all'){page().groups.forEach(g=>collapsed().add(g.id));render();fit();return;}
  if(a==='groups')return groupsDialog();if(a==='group-edit')return groupEditor(C.hierarchy(page()).owner.get(n?.id));if(a.startsWith('arrange-'))return arrangeSelection(a.slice(8));if(a==='route-add')return addRoutePoint();if(a==='route-clear')return resetRoute();if(a==='menu')return projectMenu();if(a==='help')return help();if(a==='registry')return registry();if(a==='publish')return publish();if(a==='import')return importFile();
- if(a==='new-page'){inputDialog('Новая страница','Название', 'Новый процесс',title=>change(()=>{S.project.pages.push(C.createPage(title));S.pageIndex=S.project.pages.length-1;S.selected.clear();}));return;}
+ if(a==='new-page'){inputDialog('Новая страница','Название', 'Новый процесс',title=>change(()=>{S.project.pages.push(C.createPage(title));switchPage(S.project.pages.length-1);S.selected.clear();}));return;}
  if(a==='rename-project'){inputDialog('Название проекта','Название',S.project.title,title=>change(()=>S.project.title=title));return;}
  if(a==='rename-page'){inputDialog('Название страницы','Название',page().title,title=>change(()=>page().title=title));return;}
  if(a==='layout'){closeModal();change(()=>{S.project.pages[S.pageIndex]=C.autoLayout(page());collapsed().clear();S.compact=false;});fit();return;}
@@ -328,8 +333,8 @@ function legacyTableEditor(node){
 function pickFiles(accept='',multiple=true){return new Promise(resolve=>{const input=document.createElement('input');input.type='file';input.accept=accept;input.multiple=multiple;input.style.display='none';document.body.append(input);input.onchange=()=>{resolve([...input.files]);input.remove();};input.oncancel=()=>{resolve([]);input.remove();};input.click();});}
 async function legacyUploadFile(file,replaceId,options={}){
  const ctx=operationContext();if(file.size>512*1024*1024)throw Error('Файл больше 512 МБ');toast('Загрузка: '+file.name,10000);let m;
- const apply=()=>{requireContext(ctx,true);if(m.projectRevision!==undefined){S.project.revision=Math.max(S.project.revision||0,m.projectRevision);delete m.projectRevision;}if(options.title)m.title=options.title;checkpoint();const i=S.project.materials.findIndex(x=>x.id===m.id);if(i>=0)S.project.materials[i]=m;else S.project.materials.push(m);if(options.attachNodeId){const n=page().nodes.find(n=>n.id===options.attachNodeId);if(n)n.materials=[...new Set([...n.materials,m.id])];}changed();renderTop();renderInspector();toast('Загружено: '+m.title);return m;};
- if(S.server){await save();return serverMutation(ctx,async()=>{requireContext(ctx,true);m=await request('/api/upload',{method:'POST',headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name),'X-Project-Revision':String(S.project.revision),...(replaceId?{'X-Replace-Material':replaceId}:{})},body:file});return apply();});}
+ const apply=()=>{acceptServerReceipt(ctx.doc,m);if(DOC!==ctx.doc||S.server!==ctx.server||S.home)throw new DOMException('Контекст документа изменился','AbortError');const samePage=S.project.pages[S.pageIndex]?.id===ctx.page;delete m.projectRevision;if(options.title)m.title=options.title;checkpoint();const i=S.project.materials.findIndex(x=>x.id===m.id);if(i>=0)S.project.materials[i]=m;else S.project.materials.push(m);if(options.attachNodeId&&samePage){const n=page().nodes.find(n=>n.id===options.attachNodeId);if(n)n.materials=[...new Set([...n.materials,m.id])];}changed();renderTop();renderInspector();toast('Загружено: '+m.title+(options.attachNodeId&&!samePage?' · добавлено в реестр, страница изменилась':''));return m;};
+ if(S.server){await save();return serverMutation(ctx,async()=>{requireContext(ctx);m=await request('/api/upload',{method:'POST',headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name),'X-Project-Revision':String(S.project.revision),...(replaceId?{'X-Replace-Material':replaceId}:{})},body:file});return apply();});}
  else{const aid=guid();await dbPut('asset:'+aid,file);liveAssets.set(aid,URL.createObjectURL(file));const kind=file.type.startsWith('video/')?'video':file.type.startsWith('audio/')?'audio':file.type.startsWith('image/')?'image':file.type==='application/pdf'||/\.pdf$/i.test(file.name)?'pdf':'document';const prev=replaceId?mat(replaceId):null;m={id:replaceId||C.uid('material'),title:prev?.title||file.name,kind,asset:aid,filename:file.name,mime:file.type||'application/octet-stream',size:file.size,version:(prev?.version||0)+1,status:'Загружен'};}
 
  return apply();
@@ -349,12 +354,12 @@ function legacyEditMaterial(id,attachNodeId){
  const m=id?mat(id):{title:'',kind:'link',url:'',startAt:0};modal(id?'Изменить материал':'Новый материал-ссылка',`<div class="stack">${field('Название','mat-title',m.title)}<label class="field">Тип<select id="mat-kind">${[['link','Сайт / ссылка'],['video','Видео (прямая ссылка на файл)'],['pdf','PDF'],['document','Документ / презентация'],['image','Изображение'],['audio','Аудио'],['page','Страница внутри проекта']].map(([k,v])=>`<option value="${k}" ${m.kind===k?'selected':''}>${v}</option>`).join('')}</select></label>${field('Адрес HTTP / HTTPS или data:page/id,…','mat-url',m.url||'')}${field('Начать видео с секунды','mat-time',m.startAt||0,'number')}<label class="row"><input id="mat-embed" type="checkbox" ${m.embed?'checked':''}> Разрешить встраивание сайта в окно</label><p class="muted">${m.asset?'У материала уже есть загруженный файл. Чтобы переключиться на внешний адрес, заполните поле адреса. Старая копия останется в хранилище.':'Сайты могут запрещать встраивание. Для YouTube и подобных сервисов используйте разрешённую ссылку встраивания и тип «Сайт», либо открывайте их в новой вкладке.'}</p></div>`,`<button id="mat-save" class="primary">Сохранить</button>`,true);
  $('#mat-save').onclick=()=>{const title=$('#mat-title').value.trim(),url=$('#mat-url').value.trim(),kind=$('#mat-kind').value,startAt=Math.max(0,Number($('#mat-time').value)||0),embed=$('#mat-embed').checked;if(!title)return toast('Введите название');if(url&&!/^(https?:\/\/|data:page\/id,)/i.test(url))return toast('Разрешены только HTTP / HTTPS и внутренние страницы');if(!url&&!m.asset)return toast('Введите адрес или загрузите файл');closeModal();change(()=>{if(id){Object.assign(m,{title,kind,url,startAt,embed,version:(m.version||1)+1});if(url){delete m.asset;delete m.previewAsset;}}else{const mid=C.uid('material');S.project.materials.push({id:mid,title,kind,url,startAt,embed,version:1,status:'Не проверено'});if(attachNodeId){const n=page().nodes.find(n=>n.id===attachNodeId);if(n)n.materials.push(mid);}}});registry(attachNodeId);};
 }
-function showUsage(id){const us=usage(id);modal('Где используется материал',`<div class="stack">${us.map(u=>`<button class="full" style="justify-content:flex-start;white-space:normal;text-align:left" data-go-page="${u.pageIndex}" data-go-node="${esc(u.id)}"><span>${esc(u.title)}</span><small>${esc(u.page)}</small></button>`).join('')||'<p>Нет привязок в текущем черновике. Материал может использоваться в ранее опубликованных версиях.</p>'}</div>`,'',true);$$('[data-go-node]').forEach(b=>b.onclick=()=>{closeModal();S.pageIndex=Number(b.dataset.goPage);render();focusNode(b.dataset.goNode);});}
+function showUsage(id){const us=usage(id);modal('Где используется материал',`<div class="stack">${us.map(u=>`<button class="full" style="justify-content:flex-start;white-space:normal;text-align:left" data-go-page="${u.pageIndex}" data-go-node="${esc(u.id)}"><span>${esc(u.title)}</span><small>${esc(u.page)}</small></button>`).join('')||'<p>Нет привязок в текущем черновике. Материал может использоваться в ранее опубликованных версиях.</p>'}</div>`,'',true);$$('[data-go-node]').forEach(b=>b.onclick=()=>{closeModal();switchPage(Number(b.dataset.goPage));render();focusNode(b.dataset.goNode);});}
 function legacyShowNodeMaterials(n,kind){const ms=(n.materials||[]).map(mat).filter(m=>m&&(!kind||m.kind===kind));if(ms.length===1)return openMaterial(ms[0].id);modal(n.title,`<div class="stack">${ms.map(m=>`<button data-view-material="${esc(m.id)}" style="justify-content:flex-start">${sign(m.kind)} ${esc(m.title)}</button>`).join('')}</div>`,'',true);$$('[data-view-material]').forEach(b=>b.onclick=()=>openMaterial(b.dataset.viewMaterial));}
 async function legacyOpenMaterial(id){
  if(S.server){try{if(!S.readOnly)await save();const latest=S.pub?(await request('/api/published/'+encodeURIComponent(S.pub))).materials:await request('/api/materials');S.project.materials=latest;}catch(err){toast(err.message,8000);return;}}
  const m=mat(id);if(!m)return toast('Материал не найден');
- if(m.kind==='page'||m.url?.startsWith('data:page/id,')){const pid=m.url.split(',')[1],index=S.project.pages.findIndex(p=>p.id===pid);if(index<0)return toast('Связанная страница отсутствует');closeModal();S.pageIndex=index;S.selected.clear();render();fit();return;}
+ if(m.kind==='page'||m.url?.startsWith('data:page/id,')){const pid=m.url.split(',')[1],index=S.project.pages.findIndex(p=>p.id===pid);if(index<0)return toast('Связанная страница отсутствует');closeModal();switchPage(index);S.selected.clear();render();fit();return;}
  const url=assetURL(m),preview=m.previewAsset?assetURL(m,true):m.previewMaterial?assetURL(mat(m.previewMaterial)):null;
  if(!url&&!preview)return modal(m.title,'<div class="notice warn">Файл недоступен. Откройте реестр и замените файл, либо импортируйте проект вместе с материалами.</div>','',true);
  let content='';const meta=`<p class="muted">${esc(m.filename||m.kind)} · версия ${m.version||1}${m.size?' · '+(m.size/1024/1024).toFixed(1)+' МБ':''}</p>`;
@@ -367,7 +372,7 @@ async function legacyOpenMaterial(id){
  else content=`<div class="notice"><p>Внешний ресурс:</p><p style="overflow-wrap:anywhere">${esc(m.url)}</p><p class="muted">Ссылка открывается отдельно. В редакторе материала можно разрешить просмотр внутри окна, когда сайт это поддерживает.</p></div>`;
  modal(m.title,meta+content,`<a class="badge" href="${esc(url)}" target="_blank" rel="noopener noreferrer" style="padding:9px 13px;text-decoration:none">Открыть отдельно</a>${m.asset?`<a href="${esc(url+(S.server?(url.includes('?')?'&':'?')+'download=1':''))}" download="${esc(m.filename||m.title)}">Получить исходный файл</a>`:''}`);
  const video=$('video');if(video){video.onloadedmetadata=()=>{if(m.startAt&&m.startAt<video.duration)video.currentTime=m.startAt;};video.onerror=()=>{$('#media-error').textContent='Браузер не смог воспроизвести этот файл. Проверьте кодек (рекомендуется MP4 H.264/AAC или WebM) либо откройте исходный файл.';};}
- if($('#create-preview'))$('#create-preview').onclick=async()=>{if(!S.server)return toast('Автоконвертация доступна после запуска start.cmd / start.sh. Здесь можно прикрепить готовый PDF.');const ctx=operationContext();try{$('#create-preview').disabled=true;$('#create-preview').textContent='Конвертирую…';await save();await serverMutation(ctx,async()=>{const updated=await request('/api/preview/'+encodeURIComponent(m.id),{method:'POST',headers:{'X-Project-Revision':String(S.project.revision)}});requireContext(ctx);S.project.revision=Math.max(S.project.revision||0,updated.projectRevision);const current=findMaterial(m.id);if(current){if(current.asset===updated.asset)current.previewAsset=updated.previewAsset;current.version=updated.version;current.baseVersion=updated.baseVersion;changed();}});if(contextCurrent(ctx))openMaterial(m.id);}catch(err){if(contextCurrent(ctx)){toast(err.message,9000);openMaterial(m.id);}}};
+ if($('#create-preview'))$('#create-preview').onclick=async()=>{if(!S.server)return toast('Автоконвертация доступна после запуска start.cmd / start.sh. Здесь можно прикрепить готовый PDF.');const ctx=operationContext();try{$('#create-preview').disabled=true;$('#create-preview').textContent='Конвертирую…';await save();await serverMutation(ctx,async()=>{const updated=await request('/api/preview/'+encodeURIComponent(m.id),{method:'POST',headers:{'X-Project-Revision':String(S.project.revision)}});acceptServerReceipt(ctx.doc,updated);requireContext(ctx);const current=findMaterial(m.id);if(current){if(current.asset===updated.asset)current.previewAsset=updated.previewAsset;current.version=updated.version;current.baseVersion=updated.baseVersion;changed();}});if(contextCurrent(ctx))openMaterial(m.id);}catch(err){if(contextCurrent(ctx)){toast(err.message,9000);openMaterial(m.id);}}};
  if($('#manual-preview'))$('#manual-preview').onclick=async()=>{try{const files=await pickFiles('.pdf',false);if(files.length){const previewMat=await uploadFile(files[0]);change(()=>{m.previewAsset=previewMat.asset;m.version=(m.version||1)+1;});openMaterial(m.id);}}catch(err){toast(err.message);}};
 }
 function drawingSettings(){modal('Параметры рисования',`<div class="stack"><div class="grid2">${field('Цвет','draw-color',S.drawColor,'color')}${field('Толщина линии','draw-width',S.drawWidth,'number')}</div><label class="row"><input id="draw-anchor" type="checkbox" ${S.anchorDrawing?'checked':''}> Привязывать рисунок к выбранному блоку</label><p class="muted">Привязанный рисунок перемещается и скрывается вместе с блоком. Для свободного рисунка снимите флажок.</p></div>`,`<button id="draw-settings-save" class="primary">Применить</button>`,true);$('#draw-settings-save').onclick=()=>{S.drawColor=$('#draw-color').value;S.drawWidth=Math.max(1,Math.min(30,Number($('#draw-width').value)||3));S.anchorDrawing=$('#draw-anchor').checked;closeModal();setTool('pen');};}
@@ -502,7 +507,7 @@ function legacyBulkRelink(){
 
 /* 0.3: The editor is an application. A document and its referenced files are separate.
    All filesystem access is explicitly granted by the user; imported HTML is parsed, never run. */
-const RELEASE='0.7.20';
+const RELEASE='0.7.21';
 function desktopAvailable(){return typeof window.STUDIO_DESKTOP?.call==='function';}
 function nativeAvailable(){return desktopAvailable()||!!window.STUDIO_NATIVE?.token&&location.hostname==='127.0.0.1';}
 async function nativeCall(route,data={}){if(desktopAvailable())return window.STUDIO_DESKTOP.call(route,data);if(!nativeAvailable())throw Error('Открытие оригинала доступно в Pipeline Studio.exe');const response=await fetch('/native/'+route,{method:'POST',headers:{'Content-Type':'application/json','X-Studio-Token':window.STUDIO_NATIVE.token},body:JSON.stringify(data),cache:'no-store'});const result=await response.json();if(!response.ok)throw Error(result.error||'Не удалось обратиться к исходному файлу');return result;}
@@ -512,12 +517,39 @@ function originalFileHelp(m){const parent=registryReturn();modal('Открыть
 let DOC={key:null,name:'',handle:null,root:null,files:new Map(),sessionFiles:new Map(),urls:new Map(),direct:false,exportedAt:0};
 let recentDocuments=[];
 let documentOpenVersion=0;
+function reserveDocumentOpen(){return ++documentOpenVersion;}
 const sourceHistory=new WeakMap();
 function operationContext(){return {doc:DOC,project:S.project,page:S.project?.pages[S.pageIndex]?.id,server:S.server};}
 function contextCurrent(ctx,withPage=false){return DOC===ctx.doc&&S.project===ctx.project&&S.server===ctx.server&&!S.home&&(!withPage||S.project?.pages[S.pageIndex]?.id===ctx.page);}
 function requireContext(ctx,withPage=false){if(!contextCurrent(ctx,withPage)||S.readOnly)throw new DOMException('Контекст документа изменился','AbortError');}
 function serverMutation(ctx,work){const run=()=>{requireContext(ctx);return work();},job=(ctx.doc.serverQueue||Promise.resolve()).then(run,run);ctx.doc.serverQueue=job.catch(()=>{});return job;}
-function commitActiveEditors(){if(quickEdit)finishQuickEdit();if(quickEdgeEdit)finishEdgeLabel();}
+function commitActiveEditors(){
+ const active=document.activeElement;
+ if(active?.closest?.('#inspector')&&active.matches?.('input,textarea,select'))active.dispatchEvent(new Event('change',{bubbles:true}));
+ if(quickEdit)finishQuickEdit();if(quickEdgeEdit)finishEdgeLabel();
+}
+// A receipt is transport state, not undoable document content.
+function applyServerBases(doc,project){
+ project.revision=doc.serverRevision??project.revision;
+ for(const m of project.materials){const v=doc.materialBases?.get(m.id);if(v!==undefined)m.baseVersion=v;else delete m.baseVersion;}
+ return project;
+}
+function acceptServerReceipt(doc,receipt,full=false){
+ const revision=receipt.revision??receipt.projectRevision;if(!Number.isSafeInteger(revision)||revision<(doc.serverRevision||0))return;
+ doc.serverRevision=revision;if(full)doc.materialBases=new Map();doc.materialBases||=new Map();
+ for(const [id,v] of Object.entries(receipt.materialVersions||{}))if(Number.isSafeInteger(v)&&v>0)doc.materialBases.set(id,v);
+ if(receipt.id&&Number.isSafeInteger(receipt.baseVersion??receipt.version))doc.materialBases.set(receipt.id,receipt.baseVersion??receipt.version);
+ if(DOC===doc&&S.server)applyServerBases(doc,S.project);
+}
+function serverSnapshot(doc){
+ const p=applyServerBases(doc,documentSnapshot());
+ p.deletedMaterials=(p.deletedMaterials||[]).filter(m=>doc.materialBases.has(m.id)).map(m=>({...m,version:doc.materialBases.get(m.id)}));return p;
+}
+function switchPage(index){
+ if(!Number.isInteger(index)||!S.project?.pages[index])throw Error('Страница не найдена');
+ commitActiveEditors();S.pendingPort=S.addingBus=S.addingBusPair=null;S.drag=null;S.connectionCycle=null;S.selectedSegment=null;stopPlacement();
+ S.selected.clear();S.selectedEdges.clear();S.selectedDrawings?.clear();S.selectedBuses?.clear();S.selectedEdge=S.selectedBus=S.selectedDrawing=null;S.search='';S.pageIndex=index;
+}
 function historySnapshot(){const p=documentSnapshot();sourceHistory.set(p,{doc:DOC,files:new Map(DOC.sessionFiles),handles:new Map(DOC.sourceHandles||[])});return p;}
 Object.assign(S,{home:false,leftHidden:false,rightHidden:false,selectedEdges:new Set(),selectedBus:null,pendingPort:null,iconEdit:false,selectedIcon:0});
 const safeJSON=o=>JSON.stringify(o).replace(/</g,'\\u003c').replace(/\u2028/g,'\\u2028').replace(/\u2029/g,'\\u2029');
@@ -544,7 +576,7 @@ async function save(){
  if(S.saving){await new Promise(r=>setTimeout(r,80));return save();}
  let version=S.editVersion,p=documentSnapshot();const key=DOC.key,doc=DOC,server=S.server,ctx=operationContext();
  S.saving=true;updateStatus();
- try{if(server){await serverMutation(ctx,async()=>{version=S.editVersion;p=documentSnapshot();const ans=await apiPut('/api/project',p);if(DOC===doc){S.project.revision=Math.max(S.project.revision||0,ans.revision);for(const m of S.project.materials){const v=ans.materialVersions?.[m.id];if(v!==undefined&&v>=(m.baseVersion||0)){m.baseVersion=v;m.version=v;}}}});}
+ try{if(server){await serverMutation(ctx,async()=>{version=S.editVersion;p=serverSnapshot(doc);const ans=await apiPut('/api/project',p);acceptServerReceipt(doc,ans,true);if(DOC===doc){for(const m of S.project.materials){const v=doc.materialBases.get(m.id);if(v!==undefined)m.version=v;}}});}
   else{p.revision=(p.revision||0)+1;await dbPut('document:'+key,p);if(DOC===doc)S.project.revision=p.revision;}
   if(DOC===doc){if(version===S.editVersion)S.dirty=false;await rememberDocument();}
  }finally{S.saving=false;updateStatus();}
@@ -553,7 +585,7 @@ function normalize(p){const was=p?.schemaVersion||1;C.validatePresentation(p);co
 function collapsed(){if(!S.project)return new Set();const p=page();if(!S.collapsed[p.id])S.collapsed[p.id]=new Set(p.collapseMode==='groups'?p.groups.map(g=>g.id):p.nodes.filter(n=>n.collapsible).map(n=>n.id));return S.collapsed[p.id];}
 async function activateDocument(project,{name='',handle=null,key=null,server=false,readOnly=false,direct=false,nativePath='',nativeDigest='',fileDirty=false,openToken=null}={}){
  const token=openToken??++documentOpenVersion;if(token!==documentOpenVersion)return;const prepared=normalize(C.clone(project));commitActiveEditors();if(S.dirty&&!S.readOnly)await save();if(token!==documentOpenVersion)return;
- const next={key:key||C.uid('doc'),name,handle,root:null,files:new Map(),sessionFiles:new Map(),urls:new Map(),sourceHandles:new Map(),direct,exportedAt:0,nativePath,nativeDigest};
+ const next={key:key||C.uid('doc'),name,handle,root:null,files:new Map(),sessionFiles:new Map(),urls:new Map(),sourceHandles:new Map(),direct,exportedAt:0,nativePath,nativeDigest,serverRevision:server?prepared.revision:undefined,materialBases:new Map(server?prepared.materials.map(m=>[m.id,m.baseVersion??m.version??1]):[])};
  if(key){next.handle=handle||await dbGet('handle:'+key)||null;next.root=await dbGet('root:'+key)||null;const rec=(await dbGet('recent-v3')||[]).find(r=>r.key===key);next.path=rec?.path||'';next.folderName=rec?.folderName||next.root?.name||'';next.nativePath=nativePath||rec?.nativePath||'';next.nativeDigest=nativeDigest||rec?.nativeDigest||'';}
  if(next.nativePath)next.path=next.nativePath;if(direct&&location.protocol==='file:')next.path=decodeURIComponent(location.pathname).replace(/^\/([A-Za-z]:)/,'$1');
  const rows=Object.fromEntries(Object.entries(prepared.viewState?.collapsedRows||{}).map(([k,v])=>[k,new Set(v)]));let rowControls={};if(readOnly){const pref=await dbGet('reader-rows:'+prepared.id);if(pref){rowControls=pref.controls||{};for(const [k,v] of Object.entries(pref.collapsed||{}))rows[k]=new Set(v);}}
@@ -625,17 +657,20 @@ function assetURL(m,preview=false){
  return legacyAssetURL(m,preview);
 }
 async function resolveMaterial(m,preview=false){
- if(!m)return '';const path=materialPath(m,preview),key=m.id+(preview?':preview':'');
- if(nativeAvailable()&&(path||m.nativePath||preview&&m.previewNativePath))return nativeSourceURL(m,preview);
- if(DOC.sourceHandles?.has(key)){const file=await DOC.sourceHandles.get(key).getFile();DOC.sessionFiles.set(key,file);if(DOC.urls.has(key))URL.revokeObjectURL(DOC.urls.get(key));DOC.urls.delete(key);}
- if(DOC.sessionFiles.has(key)){if(!DOC.urls.has(key))DOC.urls.set(key,URL.createObjectURL(DOC.sessionFiles.get(key)));return DOC.urls.get(key);}
- if(path&&DOC.root&&validRelative(path)){
-  try{if(await DOC.root.queryPermission({mode:'read'})!=='granted'&&await DOC.root.requestPermission({mode:'read'})!=='granted')throw Error('Доступ к папке не предоставлен');
-   const parts=path.replace(/\\/g,'/').split('/').filter(p=>p&&p!=='.');let h=DOC.root;for(const part of parts.slice(0,-1))h=await h.getDirectoryHandle(part);const fh=await h.getFileHandle(parts.at(-1)),file=await fh.getFile();
-   if(DOC.urls.has(key))URL.revokeObjectURL(DOC.urls.get(key));const u=URL.createObjectURL(file);DOC.urls.set(key,u);return u;
+ if(!m)return '';const path=materialPath(m,preview),key=m.id+(preview?':preview':''),doc=DOC,project=S.project,server=S.server,root=doc.root,registered=project.materials.find(x=>x.id===m.id),handle=doc.sourceHandles?.get(key),session=doc.sessionFiles.get(key),files=doc.files;
+ const signature=()=>JSON.stringify(preview?[m.previewPath,m.previewNativePath,m.previewURL,m.previewAsset]:[m.path,m.nativePath,m.url,m.asset]);const initial=signature();
+ doc.sourceReads||=new Map();const token={};doc.sourceReads.set(key,token);
+ const current=()=>{if(DOC!==doc||S.project!==project||S.server!==server||(registered&&project.materials.find(x=>x.id===m.id)!==registered)||signature()!==initial||doc.sourceHandles?.get(key)!==handle||doc.root!==root||doc.files!==files||doc.sessionFiles.get(key)!==session||doc.sourceReads.get(key)!==token)throw new DOMException('Источник или документ изменился','AbortError');};
+ if(nativeAvailable()&&(path||(preview?m.previewNativePath:m.nativePath))){const url=await nativeSourceURL(m,preview);current();return url;}
+ if(handle){const file=await handle.getFile();current();doc.sessionFiles.set(key,file);if(doc.urls.has(key))URL.revokeObjectURL(doc.urls.get(key));const u=URL.createObjectURL(file);doc.urls.set(key,u);return u;}
+ if(session){if(!doc.urls.has(key))doc.urls.set(key,URL.createObjectURL(session));return doc.urls.get(key);}
+ if(path&&root&&validRelative(path)){
+  try{let permission=await root.queryPermission({mode:'read'});current();if(permission!=='granted'){permission=await root.requestPermission({mode:'read'});current();}if(permission!=='granted')throw Error('Доступ к папке не предоставлен');
+   const parts=path.replace(/\\/g,'/').split('/').filter(p=>p&&p!=='.');let h=root;for(const part of parts.slice(0,-1)){h=await h.getDirectoryHandle(part);current();}const fh=await h.getFileHandle(parts.at(-1));current();const file=await fh.getFile();current();
+   if(doc.urls.has(key))URL.revokeObjectURL(doc.urls.get(key));const u=URL.createObjectURL(file);doc.urls.set(key,u);return u;
   }catch(e){if(e.name==='NotFoundError')throw Error('Файл не найден: '+path+'. Исправьте путь в реестре или подключите правильную папку.');throw e;}
  }
- return assetURL(m,preview);
+ current();return assetURL(m,preview);
 }
 function windowsFileURL(path){if(typeof path!=='string')return '';const p=path.replace(/\\/g,'/');if(/^[A-Za-z]:\//.test(p))return 'file:///'+p.split('/').map((s,i)=>i?encodeURIComponent(s):s).join('/');if(p.startsWith('//'))return 'file:'+p.split('/').map(encodeURIComponent).join('/');return '';}
 function relativeMaterialPath(nativePath,documentPath){
@@ -813,7 +848,7 @@ function v3RenderInspector(){
 function checkpoint(){if(S.readOnly)return;S.history.push(historySnapshot());if(S.history.length>80)S.history.shift();S.redo=[];}
 function restoreHistory(p){
  const rev=S.project.revision,selection=[...S.selected],edge=S.selectedEdge,bus=S.selectedBus,iconEdit=S.iconEdit;
- S.project=p;S.project.revision=rev;S.pageIndex=Math.max(0,Math.min(p.pages.length-1,p.viewState?.page??0));S.compact=p.viewState?.compact??S.compact;const sources=sourceHistory.get(p);if(sources?.doc===DOC){DOC.sessionFiles=new Map(sources.files);DOC.sourceHandles=new Map(sources.handles);}for(const u of DOC.urls.values())URL.revokeObjectURL(u);DOC.urls.clear();S.collapsedRows=Object.fromEntries(Object.entries(p.viewState?.collapsedRows||{}).map(([k,v])=>[k,new Set(v)]));
+ S.project=p;S.project.revision=rev;if(S.server)applyServerBases(DOC,S.project);S.pageIndex=Math.max(0,Math.min(p.pages.length-1,p.viewState?.page??0));S.compact=p.viewState?.compact??S.compact;const sources=sourceHistory.get(p);if(sources?.doc===DOC){DOC.sessionFiles=new Map(sources.files);DOC.sourceHandles=new Map(sources.handles);}for(const u of DOC.urls.values())URL.revokeObjectURL(u);DOC.urls.clear();S.collapsedRows=Object.fromEntries(Object.entries(p.viewState?.collapsedRows||{}).map(([k,v])=>[k,new Set(v)]));
  if(p.viewState?.collapsed)S.collapsed=Object.fromEntries(Object.entries(p.viewState.collapsed).map(([k,v])=>[k,new Set(v)]));
  S.selected=new Set(selection.filter(id=>page().nodes.some(n=>n.id===id)));
  S.selectedEdges=new Set([...S.selectedEdges].filter(id=>page().edges.some(e=>e.id===id)));
@@ -880,6 +915,7 @@ function v3ChoosePort(node,port){
 }
 function samePort(n,a,b){const p=C.port(n,a),q=C.port(n,b);return p.side===q.side&&Math.abs(p.x-q.x)+Math.abs(p.y-q.y)<.01;}
 function connectPorts(source,sourcePort,target,targetPort){
+ if(!validConnectionPorts(source,sourcePort,target,targetPort))return;
  if(page().edges.some(e=>e.source===source&&e.target===target&&e.sourcePort===sourcePort&&e.targetPort===targetPort)){toast('Эти порты уже соединены');renderScene();return;}
  change(()=>{const e={id:C.uid('edge'),source,sourcePort,target,targetPort,arrow:true,dashed:false,label:''};page().edges.push(e);
   S.selectedEdge=e.id;S.selectedEdges=new Set([e.id]);S.selectedBus=null;S.selected.clear();
@@ -1037,17 +1073,18 @@ function v5ShowNodeMaterials(n,kind){
  $$('[data-view-material]').forEach(b=>b.onclick=caught(()=>openMaterial(b.dataset.viewMaterial)));
 }
 async function v5OpenMaterial(id){
- if(S.server){if(!S.readOnly)await save();const latest=S.pub?(await request('/api/published/'+encodeURIComponent(S.pub))).materials:await request('/api/materials');S.project.materials=latest;}
- const m=mat(id);if(!m)return toast('Материал не найден');
+ const ctx=operationContext();const m=mat(id);if(!m)return toast('Материал не найден');
  if(m.kind==='page'||m.url?.startsWith('data:page/id,')){
   const pid=(m.url||'').split(',')[1],index=S.project.pages.findIndex(p=>p.id===pid),same=index===S.pageIndex;
   modal('Переход на страницу',`<p class="material-long-title">${esc(m.title)}</p><div class="notice">Это внутренняя ссылка, а не файл. ${index<0?'Связанная страница отсутствует.':same?'Вы уже на этой странице. Камера не перемещалась.':'Страница: '+esc(S.project.pages[index].title)}</div>`,index>=0&&!same?'<button id="go-material-page" class="primary">Перейти на страницу</button>':'',true);
-  if($('#go-material-page'))$('#go-material-page').onclick=()=>{closeModal();S.pageIndex=index;S.selected.clear();render();fit();};return;
+  if($('#go-material-page'))$('#go-material-page').onclick=()=>{closeModal();switchPage(index);S.selected.clear();render();fit();};return;
  }
- let url='',preview='',error='';try{url=await resolveMaterial(m);if(m.previewPath||m.previewNativePath||m.previewURL||m.previewAsset)preview=await resolveMaterial(m,true);if(m.previewMaterial)preview=await resolveMaterial(mat(m.previewMaterial));}catch(e){error=e.message;}
+ let url='',preview='',error='',previewError='';try{url=await resolveMaterial(m);}catch(e){if(e.name==='AbortError')return;error=e.message;}
+ try{if(m.previewMaterial)preview=await resolveMaterial(mat(m.previewMaterial));else if(m.previewPath||m.previewNativePath||m.previewURL||m.previewAsset)preview=await resolveMaterial(m,true);}catch(e){if(e.name==='AbortError')return;previewError=e.message;}
+ if(!contextCurrent(ctx))return;
  const info=`<p class="material-long-title">${fileIcon(m)} <strong>${esc(m.filename||m.title)}</strong></p><p class="material-path muted">${esc(locationText(m))} · ${esc(typeName[m.kind]||m.kind)}</p>`;
  let content=info;
- if(error||!url&&!preview)content+=`<div class="notice warn">${esc(error||'Браузер ещё не имеет доступа к папке материалов. Укажите корневую папку, в которой лежит HTML документа.')}<div class="row wrap"><button id="viewer-bind-folder">Подключить папку</button>${S.readOnly?'':'<button id="viewer-edit-path">Исправить путь</button>'}</div></div>`;
+ if(!url&&!preview)content+=`<div class="notice warn">${esc(error||previewError||'Браузер ещё не имеет доступа к папке материалов. Укажите корневую папку, в которой лежит HTML документа.')}<div class="row wrap"><button id="viewer-bind-folder">Подключить папку</button>${S.readOnly?'':'<button id="viewer-edit-path">Исправить путь</button>'}</div></div>`;
  else if(m.kind==='video')content+=`<video controls preload="metadata" playsinline src="${esc(url)}"></video><p id="media-error" class="muted"></p>`;
  else if(m.kind==='audio')content+=`<audio controls src="${esc(url)}"></audio>`;
  else if(m.kind==='image')content+=`<img class="viewer-img" alt="${esc(m.title)}" src="${esc(url)}">`;
@@ -1055,6 +1092,7 @@ async function v5OpenMaterial(id){
  else if(m.kind==='link'&&m.embed)content+=`<iframe title="${esc(m.title)}" sandbox="allow-scripts allow-forms allow-popups" referrerpolicy="no-referrer" src="${esc(url)}"></iframe><p class="muted">Сайт может запрещать встраивание. Тогда используйте «Открыть отдельно».</p>`;
  else if(m.kind==='document')content+='<div class="notice"><h3>Исходный документ</h3><p>Word и презентация остаются в своей папке. Для просмотра здесь укажите в реестре путь к PDF-превью. Без превью исходник можно открыть отдельно.</p></div>';
  else content+='<div class="notice">Внешняя ссылка. Откройте её отдельной кнопкой ниже. Камера схемы остаётся на месте.</div>';
+ if(error&&preview)content+=`<div class="notice warn">Оригинал недоступен: ${esc(error)}. Показано PDF-превью.</div>`;if(previewError)content+=`<div class="notice warn">Превью недоступно: ${esc(previewError)}</div>`;
  const footer=`${url?`<a class="button-link" href="${esc(url)}" data-material-action="external" data-material-id="${esc(m.id)}">Открыть отдельно</a>`:''}<span class="spacer"></span><button id="back-registry">К материалам</button>`;
  modal(m.title,content,footer);
  $('#back-registry').onclick=()=>registry();if($('#viewer-bind-folder'))$('#viewer-bind-folder').onclick=caught(async()=>{await bindFolder();await openMaterial(id);});if($('#viewer-edit-path'))$('#viewer-edit-path').onclick=()=>editMaterial(id);
@@ -1321,9 +1359,9 @@ function v4RenderInspector(){
 }
 function arrangeButtons(){return `<div class="notice">Выравнивание действует при перемещении блоков.${command('align-menu','magnet','Настроить привязки','Режимы привязки')}</div>`;}
 function pagesDialog(){modal('Страницы документа',`<div class="stack pages-dialog">${S.project.pages.map((p,i)=>`<button class="page-choice ${i===S.pageIndex?'is-current':''}" data-switch-page="${i}">${uiIcon('pages')}<span><strong>${esc(p.title)}</strong><small>${p.nodes.length} блоков · ${p.edges.length} связей</small></span>${i===S.pageIndex?uiIcon('check'):''}</button>`).join('')}</div>`,S.readOnly?'':`<button id="pages-add">${uiIcon('zoomIn')} Новая страница</button>`,true);
- $$('[data-switch-page]').forEach(b=>b.onclick=()=>{closeModal();S.pageIndex=Number(b.dataset.switchPage);S.selected.clear();S.selectedEdges.clear();S.selectedEdge=S.selectedBus=S.selectedDrawing=null;S.selectedDrawings?.clear();S.selectedBuses?.clear();S.addingBus=S.pendingPort=null;S.search='';render();fit();});if($('#pages-add'))$('#pages-add').onclick=()=>{closeModal();v3Action('new-page');};}
+ $$('[data-switch-page]').forEach(b=>b.onclick=()=>{closeModal();switchPage(Number(b.dataset.switchPage));S.selected.clear();S.selectedEdges.clear();S.selectedEdge=S.selectedBus=S.selectedDrawing=null;S.selectedDrawings?.clear();S.selectedBuses?.clear();S.addingBus=S.pendingPort=null;S.search='';render();fit();});if($('#pages-add'))$('#pages-add').onclick=()=>{closeModal();v3Action('new-page');};}
 function searchDialog(){modal('Найти в документе',`<input id="quick-search" placeholder="Блок, текст таблицы…" value="${esc(S.search)}"><div id="search-results" class="stack material-list" style="margin-top:14px"></div>`,'',true);
- const draw=q=>{const all=S.project.pages.flatMap((p,i)=>p.nodes.filter(n=>(n.title+' '+(n.table?.cells.flat().filter(Boolean).map(c=>c.text).join(' ')||'')).toLowerCase().includes(q.toLowerCase())).map(n=>({p,i,n})));$('#search-results').innerHTML=all.slice(0,70).map(({p,i,n})=>`<button data-result-page="${i}" data-result-node="${esc(n.id)}"><span>${richText(n.title.slice(0,150))}<small>${esc(p.title)}</small></span></button>`).join('')||'<p class="muted">Ничего не найдено.</p>';$$('[data-result-node]').forEach(b=>b.onclick=()=>{S.pageIndex=Number(b.dataset.resultPage);S.search=q;closeModal();render();focusNode(b.dataset.resultNode);});};$('#quick-search').oninput=e=>draw(e.target.value);draw(S.search);$('#quick-search').focus();}
+ const draw=q=>{const all=S.project.pages.flatMap((p,i)=>p.nodes.filter(n=>(n.title+' '+(n.table?.cells.flat().filter(Boolean).map(c=>c.text).join(' ')||'')).toLowerCase().includes(q.toLowerCase())).map(n=>({p,i,n})));$('#search-results').innerHTML=all.slice(0,70).map(({p,i,n})=>`<button data-result-page="${i}" data-result-node="${esc(n.id)}"><span>${richText(n.title.slice(0,150))}<small>${esc(p.title)}</small></span></button>`).join('')||'<p class="muted">Ничего не найдено.</p>';$$('[data-result-node]').forEach(b=>b.onclick=()=>{switchPage(Number(b.dataset.resultPage));S.search=q;closeModal();render();focusNode(b.dataset.resultNode);});};$('#quick-search').oninput=e=>draw(e.target.value);draw(S.search);$('#quick-search').focus();}
 async function v4Action(a){
  if(a==='align-menu'){openPopover('snap');return;}if(a==='layout-modes'){openPopover('layout');return;}
  if(a==='pages'){closePopover();return pagesDialog();}if(a==='search-dialog'){closePopover();return searchDialog();}
@@ -1517,7 +1555,12 @@ function busExistingDialog(){const b=page().buses.find(b=>b.id===S.selectedBus);
  modal('Связи общей гребёнки',`<p class="muted">Выберите уже созданные соединения. Наличие общего порта необязательно; направления сохранятся.</p><div class="stack">${list.map(e=>`<label class="check-row"><input type="checkbox" data-join-edge="${esc(e.id)}"><span>${esc(title(e.source))} → ${esc(title(e.target))}${e.bus?' · другая гребёнка':''}</span></label>`).join('')||'<p>Других связей нет.</p>'}</div>`,`<button id="join-existing" class="primary" ${list.length?'':'disabled'}>Включить выбранные</button>`,true);
  $('#join-existing').onclick=()=>{const ids=$$('[data-join-edge]:checked').map(x=>x.dataset.joinEdge);if(!ids.length)return toast('Выберите связи');const p=C.joinBus(page(),b.id,ids);closeModal();change(()=>S.project.pages[S.pageIndex]=p);};
 }
+function validConnectionPorts(source,sourcePort,target,targetPort){
+ const pg=page(),a=pg.nodes.find(n=>n.id===source),b=pg.nodes.find(n=>n.id===target);if(!a||!b||!C.ports(a).some(p=>p.id===sourcePort)||!C.ports(b).some(p=>p.id===targetPort)){S.pendingPort=null;toast('Порты должны принадлежать текущей странице');return false;}return true;
+}
 function choosePort(node,port){
+ if(!page().nodes.some(n=>n.id===node&&C.ports(n).some(p=>p.id===port))){S.pendingPort=null;return;}
+ if(S.pendingPort&&!validConnectionPorts(S.pendingPort.node,S.pendingPort.port,node,port))return;
  if(!S.addingBusPair)return v4ChoosePort(node,port);
  if(!S.pendingPort){S.pendingPort={node,port};renderScene();return;}
  const first=S.pendingPort;if(first.node===node&&C.samePort(page().nodes.find(n=>n.id===node),first.port,port)){S.pendingPort=null;renderScene();return;}
@@ -1688,7 +1731,7 @@ function materialControls(n){const ids=[...new Set(n.materials||[])];return `${S
 function showNodeMaterials(n,kind){const ms=[...new Set(n.materials||[])].map(findMaterial).filter(m=>m&&(!kind||m.kind===kind));modal('Источники блока',`<p class="sources-context">${richText(n.title)}</p><div class="sources-list">${ms.map(m=>materialChip(m.id)).join('')||'<p class="muted">Источников пока нет.</p>'}</div>`,S.readOnly?'':`<button id="sources-edit">${uiIcon('registry')} Открыть материалы</button>`,true);const dialog=$('.modal');dialog.classList.add('sources-dialog');makeDialogResizable(dialog,'sources');if($('#sources-edit'))$('#sources-edit').onclick=()=>registry(n.id);}
 
 function jumpToCell(target){const hit=C.cellTarget(S.project,target);if(!hit)return toast('Ячейка удалена или отсутствует в этом документе');
- closeModal();S.pageIndex=S.project.pages.indexOf(hit.page);S.folded.delete(hit.node.id);focusNode(hit.node.id);
+ closeModal();switchPage(S.project.pages.indexOf(hit.page));S.folded.delete(hit.node.id);focusNode(hit.node.id);
  const el=$(`#nodes [data-node="${CSS.escape(hit.node.id)}"] [data-table-cell="${hit.row},${hit.col}"]`);if(el){
   const rect=el.getBoundingClientRect(),stage=$('#stage').getBoundingClientRect(),v=S.view;
   const x=(rect.left-stage.left-v.x)/v.z,y=(rect.top-stage.top-v.y)/v.z,w=rect.width/v.z,h=rect.height/v.z;
@@ -1700,9 +1743,9 @@ function jumpToCell(target){const hit=C.cellTarget(S.project,target);if(!hit)ret
 async function refreshMaterialRegistry(){
  if(!S.server)return;const ctx=operationContext();if(!S.readOnly)await save();if(!contextCurrent(ctx)||S.dirty)return;const version=S.editVersion,materials=S.pub?(await request('/api/published/'+encodeURIComponent(S.pub))).materials:await request('/api/materials');if(contextCurrent(ctx)&&version===S.editVersion&&!S.dirty){C.validatePresentation({materials});S.project.materials=materials;}
 }
-async function openMaterial(id){await refreshMaterialRegistry();const m=findMaterial(id);if(!m)return toast('Материал не найден');
+async function openMaterial(id){const ctx=operationContext();await refreshMaterialRegistry();if(!contextCurrent(ctx))return;const m=findMaterial(id);if(!m)return toast('Материал не найден');
  if(m.kind==='node')return jumpToNode(m.target);if(m.kind==='cell')return jumpToCell(m.target);
- if(m.kind==='page'||m.url?.startsWith('data:page/id,')){const pid=m.target?.pageId||m.url?.split(',')[1],index=S.project.pages.findIndex(p=>p.id===pid);if(index<0)return toast('Связанная страница отсутствует');closeModal();closeFilePopover();S.pageIndex=index;S.selected.clear();S.selectedEdges.clear();S.selectedEdge=S.selectedBus=S.selectedDrawing=null;S.selectedDrawings?.clear();S.selectedBuses?.clear();render();fit();return;}
+ if(m.kind==='page'||m.url?.startsWith('data:page/id,')){const pid=m.target?.pageId||m.url?.split(',')[1],index=S.project.pages.findIndex(p=>p.id===pid);if(index<0)return toast('Связанная страница отсутствует');closeModal();closeFilePopover();switchPage(index);S.selected.clear();S.selectedEdges.clear();S.selectedEdge=S.selectedBus=S.selectedDrawing=null;S.selectedDrawings?.clear();S.selectedBuses?.clear();render();fit();return;}
  if(m.kind==='link'&&!m.embed||m.kind==='document'&&!m.previewPath&&!m.previewNativePath&&!m.previewURL&&!m.previewMaterial&&!m.previewAsset)return materialExternal(id);
  return v5OpenMaterial(id);
 }
@@ -1796,7 +1839,7 @@ document.addEventListener('contextmenu',e=>{if(e.target.closest?.('#app,#modal-r
 
 Object.assign(UI_ICONS,{fullscreen:'<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',fullscreenExit:'<path d="M3 8h5V3m8 0v5h5M8 21v-5H3m13 5v-5h5"/>'});
 function behaviorOption(id,title,checked,help){return `<label class="behavior-option" title="${esc(help)}"><span>${esc(title)}<span class="behavior-help" aria-hidden="true">ⓘ</span></span><input id="${id}" type="checkbox" role="switch" ${checked?'checked':''} aria-label="${esc(title)}" aria-description="${esc(help)}"></label>`;}
-function edgeLabelHTML(edge,route){const p=C.labelPlacement(edge,route);return `<text class="edge-label" data-edge="${esc(edge.id)}" x="${p.x}" y="${p.y}" text-anchor="middle" ${p.angle?`transform="rotate(${p.angle} ${p.x} ${p.y})"`:''}>${esc(edge.label||'')}${edge.count>1?' ×'+edge.count:''}</text>`;}
+function edgeLabelHTML(edge,route){const p=C.labelPlacement(edge,route);return `<text class="edge-label" data-edge="${esc(edge.id)}" style="${edge.fontSize?`font-size:${edge.fontSize}px;`:""}${edge.labelColor?`fill:${esc(edge.labelColor)};`:""}" ${edge.fontSize?`font-size="${edge.fontSize}"`:""} ${edge.labelColor?`fill="${esc(edge.labelColor)}"`:""} x="${p.x}" y="${p.y}" text-anchor="middle" ${p.angle?`transform="rotate(${p.angle} ${p.x} ${p.y})"`:''}>${esc(edge.label||'')}${edge.count>1?' ×'+edge.count:''}</text>`;}
 function labelSegmentControl(e){const route=S.bundle?.routes.get(e.id);return route?`<label class="field label-segment-field">Участок<select id="edge-label-segment" ${e.labelCentered===false?'disabled':''}><option value="auto">Автоматически</option>${C.routeSegments(route).map(s=>`<option value="${s.index}" ${e.labelSegment===s.index?'selected':''}>${s.index+1} · ${s.vertical?'вертикальный':'горизонтальный'}</option>`).join('')}</select></label>`:'';}
 function copyRoute(to,from){for(const key of ['manualRoute','manualRouteMode','waypoints'])if(from[key]!==undefined)to[key]=C.clone(from[key]);else delete to[key];}
 function previewStraightRoutes(base,ids){const now=new Set(ids),previous=S.snappedRoutes||new Set();for(const id of new Set([...now,...previous])){const original=base.edges.find(e=>e.id===id);if(!original)continue;for(const edge of [page().edges.find(e=>e.id===id),S.display.edges.find(e=>e.id===id)].filter(Boolean))copyRoute(edge,now.has(id)?{}:original);}S.snappedRoutes=now;}
@@ -1865,7 +1908,7 @@ function rowToggleMarkup(n){if(!n.table||S.folded.has(n.id)||!n.table.rowIds.som
 function internalSelectorHTML(prefix,m={}){const pid=m.target?.pageId||m.url?.split(',')[1]||page().id;return `<label class="field">Лист<select id="${prefix}-page">${S.project.pages.map(p=>`<option value="${esc(p.id)}" ${pid===p.id?'selected':''}>${esc(p.title)}</option>`).join('')}</select></label><label class="field">Цель<select id="${prefix}-node" aria-label="Цель внутренней ссылки"></select></label>`;}
 function bindInternalSelector(prefix,m={}){const update=()=>{const pg=S.project.pages.find(p=>p.id===$('#'+prefix+'-page').value);$('#'+prefix+'-node').innerHTML='<option value="">Весь лист</option>'+pg.nodes.map(n=>`<option value="${esc(n.id)}" ${m.target?.nodeId===n.id?'selected':''}>${esc(n.title||typeLabels[n.type])}</option>`).join('');};$('#'+prefix+'-page').onchange=update;update();}
 function internalSelection(prefix){const pageId=$('#'+prefix+'-page').value,nodeId=$('#'+prefix+'-node').value,pg=S.project.pages.find(p=>p.id===pageId),n=pg.nodes.find(n=>n.id===nodeId);return {id:C.uid('m'),kind:n?'node':'page',target:{pageId,...(n?{nodeId:n.id}:{})},title:n?.title||pg.title,...(!n?{url:'data:page/id,'+pageId}:{}),version:1};}
-function jumpToNode(target){const hit=C.internalTarget(S.project,{kind:'node',target});if(!hit)return toast('Блок внутренней ссылки удалён или отсутствует');closeModal();closeFilePopover();S.pageIndex=S.project.pages.indexOf(hit.page);focusNode(hit.node.id);const el=$(`#nodes [data-node="${CSS.escape(hit.node.id)}"]`);el?.classList.add('internal-target-flash');setTimeout(()=>el?.classList.remove('internal-target-flash'),3000);return hit;}
+function jumpToNode(target){const hit=C.internalTarget(S.project,{kind:'node',target});if(!hit)return toast('Блок внутренней ссылки удалён или отсутствует');closeModal();closeFilePopover();switchPage(S.project.pages.indexOf(hit.page));focusNode(hit.node.id);const el=$(`#nodes [data-node="${CSS.escape(hit.node.id)}"]`);el?.classList.add('internal-target-flash');setTimeout(()=>el?.classList.remove('internal-target-flash'),3000);return hit;}
 async function openRecentDocument(key){const openToken=++documentOpenVersion,r=recentDocuments.find(r=>r.key===key);if(r?.server)return openServerDocument({openToken});const draft=await dbGet('document:'+key),handle=await dbGet('handle:'+key);if(draft&&(r?.fileDirty||!handle)){await activateDocument(draft,{name:r?.name||'',key,fileDirty:!!r?.fileDirty,openToken});return;}try{if(handle){if(await handle.queryPermission({mode:'read'})!=='granted'&&await handle.requestPermission({mode:'read'})!=='granted')return;return await openDocumentFile(await handle.getFile(),handle,{key,openToken});}}catch(e){if(!draft)throw e;toast('Исходный файл недоступен. Открыта последняя сохранённая копия.');}if(draft){await activateDocument(draft,{name:r?.name||'',key,fileDirty:true,openToken});}else return openDocumentPicker();}
 
 /* 0.7.4: state marks, source removal and compact document commands. */
@@ -1970,7 +2013,7 @@ document.addEventListener('click',e=>{const target=e.target.closest('[data-style
 });
 function showConnectionHover(target){const root=$('#edges');if(!root||!S.bundle||S.dragMoving)return;root.querySelector('#connection-hover')?.remove();$$('.connection-endpoint').forEach(n=>n.classList.remove('connection-endpoint'));
  const hit=target.closest?.('[data-edge],[data-bus]');if(!hit)return;const bus=busAtTarget(hit),edge=page().edges.find(e=>e.id===hit.dataset.edge),es=bus?page().edges.filter(e=>e.bus===bus.id):edge?[edge]:[];
- let paths=[];if(bus){const b=S.bundle.buses.find(b=>b.id===bus.id);if(b)paths=[b.lead,b.trunk,...b.segments];}else if(edge){const route=S.bundle.routes.get(edge.id);if(route)paths=[{d:route.hitD||route.d}];}
+ let paths=[];if(bus){const b=S.bundle.buses.find(b=>b.id===bus.id);if(b)paths=[b.lead,b.trunk,...(b.segments||[])];}else if(edge){const route=S.bundle.routes.get(edge.id);if(route)paths=[{d:route.hitD||route.d}];}
  const group=document.createElementNS('http://www.w3.org/2000/svg','g');group.id='connection-hover';group.setAttribute('pointer-events','none');group.innerHTML=paths.map(p=>`<path d="${p.d}" fill="none" stroke="#5964df" stroke-width="${3/S.view.z}" opacity=".8"/>`).join('');root.append(group);
  for(const id of new Set(es.flatMap(e=>[e.source,e.target])))$(`#nodes [data-node="${CSS.escape(id)}"]`)?.classList.add('connection-endpoint');
 }
@@ -2038,7 +2081,7 @@ function bulkInspector079(){
  const items=S.selectionCategory==='all'?allItems:allItems.filter(i=>i.kind===S.selectionCategory||(i.kind==='node'?i.obj.type:i.kind)===S.selectionCategory),kinds=new Set(items.map(i=>i.kind)),types=new Set(items.map(i=>i.obj.type)),kind=kinds.size===1?[...kinds][0]:null,same=kind&&types.size<=1;
  const value=(o,key)=>key==='color'?(kind==='drawing'?o.color:o.stroke)||'#9aa8bf':key==='textColor'?o.color||'#18283f':key==='tableAutoSize'?!!o.table?.autoSize:key==='tableWordWrap'?o.table?.wordWrap||'words':o[key]??({fill:'#ffffff',fontSize:13,width:2,align:'center',style:'orthogonal',parentRole:'source',alignGap:64,branchGap:64,labelCentered:true,relativeLock:true,moveTogether:true}[key]??(['editLocked','locked','bold','italic','collapsible','collapseBoundary','autoSize','branchSymmetry','branchCrossings','dashed','arrowStart','symmetry','allowCrossings'].includes(key)?false:key==='arrow'?true:''));
  const input=(title,key,type='checkbox',opts=null)=>{const values=items.map(i=>value(i.obj,key)),mixed=values.some(v=>JSON.stringify(v)!==JSON.stringify(values[0])),v=values[0],options=opts||(type==='checkbox'?[['true','Включено'],['false','Выключено']]:null),disabled=key!=='editLocked'&&items.every(i=>i.obj.editLocked);
-  const control=options?`<select data-bulk-key="${key}" aria-label="${title}" ${disabled?'disabled':''}><option value="">${mixed?'Разное':'Не менять'}</option>${options.map(([k,t])=>`<option value="${k}" ${!mixed&&String(v)===k?'selected':''}>${t}</option>`).join('')}</select>`:`<input data-bulk-key="${key}" aria-label="${title}" type="${type}" value="${esc(mixed?(type==='color'?'#9aa8bf':''):v)}" placeholder="${mixed?'Разное':''}" ${disabled?'disabled':''}>`;
+  const control=options?`<select data-bulk-key="${key}" aria-label="${title}" ${disabled?'disabled':''}><option value="">${mixed?'Разное':'Не менять'}</option>${options.map(([k,t])=>`<option value="${k}" ${!mixed&&String(v)===k?'selected':''}>${t}</option>`).join('')}</select>`:`<input data-bulk-key="${key}" aria-label="${title}" type="${type}" ${type==='number'&&C.presentationRanges[key]?`min="${C.presentationRanges[key][0]}" max="${C.presentationRanges[key][1]}"`:""} value="${esc(mixed?(type==='color'?'#9aa8bf':''):v)}" placeholder="${mixed?'Разное':''}" ${disabled?'disabled':''}>`;
   return `<label class="field bulk-field">${title}${mixed?'<small class="mixed-property">Разное</small>':''}${control}</label>`;};
  panel.innerHTML=`<header class="property-header"><span class="property-emblem">${uiIcon('marquee')}</span><div><small>МНОЖЕСТВЕННЫЙ ВЫБОР</small><strong>${allItems.length} элементов</strong></div></header><label class="field">Применить к<select id="selection-category"><option value="all" ${S.selectionCategory==='all'?'selected':''}>Всё выделение</option>${cats.map(c=>`<option value="${c}" ${S.selectionCategory===c?'selected':''}>${esc(typeLabels[c]||({node:'Все блоки',edge:'Связи',bus:'Гребёнки',drawing:'Рисунки'})[c])}</option>`).join('')}</select></label>`;
  if(S.readOnly){panel.insertAdjacentHTML('beforeend','<p>Режим просмотра</p>');return;}
@@ -2074,8 +2117,8 @@ function renderInspector(){if(!S.project)return;const count=Object.values(select
 function applyTheme(id){const items=selectionItems(),theme=C.THEMES.find(t=>t.id===id);if(items.length<=1)return v078ApplyTheme(id);if(S.readOnly||!theme)return;if(S.selectionCategory==='all'&&new Set(items.map(i=>i.kind)).size>1)return;
  change(()=>{for(const {kind,obj} of items){if(obj.editLocked||S.selectionCategory!=='all'&&S.selectionCategory!==kind&&S.selectionCategory!==(kind==='node'?obj.type:kind))continue;if(kind==='node'){Object.assign(obj,{fill:theme.fill,stroke:theme.stroke,color:theme.color});for(const row of obj.table?.cells||[])for(const c of row)if(c)Object.assign(c,{fill:'transparent',stroke:theme.stroke,color:theme.color});}else if(['edge','bus'].includes(kind))Object.assign(obj,{stroke:theme.stroke,labelColor:theme.color});}});
 }
-function onChange(e){const el=e.target,id=el.id,obj=selectedObject();if(S.readOnly&&!id.startsWith('visibility-')&&!id.startsWith('layout-')&&!el.matches('[data-row-behavior]'))return;
- if(el.dataset.bulkKey){if(el.tagName==='SELECT'&&el.value==='')return;let value=el.value;if(el.type==='number'){value=Number(value);if(!Number.isFinite(value)||value<1)return;}else if(el.tagName==='SELECT'&&['true','false'].includes(value))value=value==='true';change(()=>S.project.pages[S.pageIndex]=C.bulkPatch(page(),selectionV075(),{[el.dataset.bulkKey]:value},S.selectionCategory));return;}
+function onChange(e){const el=e.target,id=el.id,obj=selectedObject();if(S.selectedEdge&&id.startsWith('edge-')&&page().buses.find(b=>b.id===obj?.bus)?.editLocked){toast('Гребёнка защищена от правки');renderInspector();return;}if(S.readOnly&&!id.startsWith('visibility-')&&!id.startsWith('layout-')&&!el.matches('[data-row-behavior]'))return;
+ if(el.dataset.bulkKey){if(el.tagName==='SELECT'&&el.value==='')return;let value=el.value;if(el.type==='number'){value=Number(value);if(!Number.isFinite(value))return;}else if(el.tagName==='SELECT'&&['true','false'].includes(value))value=value==='true';try{const next=C.bulkPatch(page(),selectionV075(),{[el.dataset.bulkKey]:value},S.selectionCategory);if(JSON.stringify(next)===JSON.stringify(page())){renderInspector();return;}change(()=>S.project.pages[S.pageIndex]=next);}catch(err){toast(err.message);renderInspector();}return;}
  if(el.dataset.constraintId){const kind=el.dataset.constraintKind,config=kind==='bus'?page().buses.find(b=>b.id===el.dataset.constraintId):kind==='condition'?page().nodes.find(n=>n.id===el.dataset.constraintId):page().symmetrySets.find(s=>s.id===el.dataset.constraintId);if(!config||constraintProtected(kind,config))return;if(!el.checked){change(()=>S.project.pages[S.pageIndex]=C.releaseSymmetry(page(),config.id,kind));return;}try{const next=C.updateSymmetry(page(),kind,config.id,kind==='bus'?{symmetry:true,autoAlign:true}:kind==='condition'?{branchSymmetry:true}:{enabled:true});change(()=>S.project.pages[S.pageIndex]=next);}catch(err){toast(err.message);renderInspector();}return;}
  if(obj?.editLocked&&!id.startsWith('visibility-')&&!id.startsWith('layout-')&&id!=='element-protected')return;
  if(id==='node-type'&&selected()&&['block','decision','comment','note'].includes(selected().type)){if(el.value===selected().type)return;change(()=>S.project.pages[S.pageIndex]=C.convertNode(page(),selected().id,el.value));return;}
@@ -2111,7 +2154,7 @@ async function action(a){if(['selected-symmetry-align','bus-symmetry-align'].inc
 }
 function finishEdgeLabel(commit=true){const edit=quickEdgeEdit;quickEdgeEdit=null;if(!commit)edgePress=null;const input=$('#quick-edge-label');if(input){input.onblur=null;input.remove();}if(!edit||!commit||S.readOnly)return;const edge=page().edges.find(e=>e.id===edit.edge);if(!edge||edge.editLocked||page().buses.find(b=>b.id===edge.bus)?.editLocked)return;if(edge.label===edit.value&&edge.labelSegment===edit.segment)return;change(()=>{edge.label=edit.value;edge.labelSegment=edit.segment;edge.labelCentered=true;});}
 function beginEdgeLabel(id,event){if(S.readOnly)return;const edge=page().edges.find(e=>e.id===id);if(!edge||edge.editLocked||page().buses.find(b=>b.id===edge.bus)?.editLocked)return;finishEdgeLabel();finishQuickEdit();const route=S.bundle.routes.get(id),segments=C.routeSegments(route),point=worldPoint(event);if(!segments.length)return;
- const distance=s=>{const dx=s.b.x-s.a.x,dy=s.b.y-s.a.y,t=Math.max(0,Math.min(1,((point.x-s.a.x)*dx+(point.y-s.a.y)*dy)/(dx*dx+dy*dy||1)));return Math.hypot(point.x-s.a.x-dx*t,point.y-s.a.y-dy*t);},segment=[...segments].sort((a,b)=>distance(a)-distance(b))[0];quickEdgeEdit={edge:id,segment:segment.index,value:edge.label||''};const stage=$('#stage'),r=stage.getBoundingClientRect(),input=document.createElement('input');input.id='quick-edge-label';input.type='text';input.value=edge.label||'';input.setAttribute('aria-label','Подпись на связи');input.placeholder='Подпись · Enter';input.style.left=Math.max(8,Math.min(r.width-248,event.clientX-r.left-110))+'px';input.style.top=Math.max(8,Math.min(r.height-46,event.clientY-r.top-42))+'px';stage.append(input);input.oninput=()=>{if(quickEdgeEdit)quickEdgeEdit.value=input.value;};input.onpointerdown=e=>e.stopPropagation();input.onclick=e=>e.stopPropagation();input.onkeydown=e=>{e.stopPropagation();if(e.key==='Enter'){e.preventDefault();finishEdgeLabel();}if(e.key==='Escape'){e.preventDefault();finishEdgeLabel(false);}};input.onblur=()=>finishEdgeLabel();input.focus();input.select();
+ const distance=s=>{const dx=s.b.x-s.a.x,dy=s.b.y-s.a.y,t=Math.max(0,Math.min(1,((point.x-s.a.x)*dx+(point.y-s.a.y)*dy)/(dx*dx+dy*dy||1)));return Math.hypot(point.x-s.a.x-dx*t,point.y-s.a.y-dy*t);},segment=[...segments].sort((a,b)=>distance(a)-distance(b))[0];quickEdgeEdit={edge:id,segment:segment.index,value:edge.label||''};const stage=$('#stage'),r=stage.getBoundingClientRect(),input=document.createElement('input');input.id='quick-edge-label';input.type='text';input.value=edge.label||'';input.setAttribute('aria-label','Подпись на связи');input.placeholder='Подпись · Enter';input.style.left=Math.max(8,Math.min(r.width-248,event.clientX-r.left-110))+'px';input.style.top=Math.max(8,Math.min(r.height-46,event.clientY-r.top-42))+'px';stage.append(input);input.oninput=()=>{if(quickEdgeEdit)quickEdgeEdit.value=input.value;};input.onpointerdown=e=>e.stopPropagation();input.onclick=e=>e.stopPropagation();input.onkeydown=e=>{if((e.ctrlKey||e.metaKey)&&(e.code==='KeyS'||e.key?.toLowerCase()==='s'))return;e.stopPropagation();if(e.key==='Enter'){e.preventDefault();finishEdgeLabel();}if(e.key==='Escape'){e.preventDefault();finishEdgeLabel(false);}};input.onblur=()=>finishEdgeLabel();input.focus();input.select();
 }
 function onDoubleClick(e){const hit=e.target.closest('[data-segment-edge],[data-edge]');if(hit&&S.tool==='select'){e.preventDefault();const id=hit.dataset.segmentEdge||hit.dataset.edge;if(quickEdgeEdit?.edge!==id)beginEdgeLabel(id,e);return;}return v078OnDoubleClick(e);}
 function onPointerDown(e){if(e.target.closest('#quick-edge-label'))return;if(quickEdgeEdit)finishEdgeLabel();if(e.altKey)return v078OnPointerDown(e);
@@ -2126,5 +2169,5 @@ document.addEventListener('click',e=>{const open=e.target.closest('[data-open-co
 document.addEventListener('selectstart',e=>{const el=e.target.nodeType===1?e.target:e.target.parentElement;if(!el?.closest('input,textarea,[contenteditable="true"]'))e.preventDefault();});
 document.addEventListener('dragstart',e=>{if(e.target.closest?.('#app'))e.preventDefault();});
 
-window.Studio={activeCell,applyTheme,selectedConnectionIds,selectionV075,deleteSelectionV075,selectFolder,onChange,nodeStateIcons,requestMaterialRemoval,projectMenu,closeProject,collapsedRows,toggleRow,setRowControl,jumpToNode,editMaterial,openRecentDocument,locationText,deleteSegment,measureNode,materialChip,fileIcon,fileType,materialLocation,materialExternal,jumpToCell,measureCell,setTool,renderInspector,renderEdges,uiIcon,pagesDialog,searchDialog,checkHTTP,checkMaterial,checkAllMaterials,materialCheckDialog,renderGuides,highlightCommonPorts,state:S,Core:C,init,home,render,fit,focusNode,action,save,saveDocument,makeNode,addNode,tableEditor,registry,preparePrint,exportHTML,exportJSON,portableProject,openMaterial,showNodeMaterials,change,uploadFile,assetURL,normalize,cleanHTML,groupsDialog,groupEditor,arrangeSelection,addRoutePoint,resetRoute,nudge,parseDocumentText,openDocumentFile,activateDocument,buildDocumentHTML,bindFolder,resolveMaterial,toggleNode,connectPorts,choosePort,undo,redo,combineSelected,tableHTML,sceneBounds,get document(){return DOC;}};
+window.Studio={reserveDocumentOpen,activeCell,applyTheme,selectedConnectionIds,selectionV075,deleteSelectionV075,selectFolder,onChange,nodeStateIcons,requestMaterialRemoval,projectMenu,closeProject,collapsedRows,toggleRow,setRowControl,jumpToNode,editMaterial,openRecentDocument,locationText,deleteSegment,measureNode,materialChip,fileIcon,fileType,materialLocation,materialExternal,jumpToCell,measureCell,setTool,renderInspector,renderEdges,uiIcon,pagesDialog,searchDialog,checkHTTP,checkMaterial,checkAllMaterials,materialCheckDialog,renderGuides,highlightCommonPorts,state:S,Core:C,init,home,render,fit,focusNode,action,save,saveDocument,makeNode,addNode,tableEditor,registry,preparePrint,exportHTML,exportJSON,portableProject,openMaterial,showNodeMaterials,change,uploadFile,assetURL,normalize,cleanHTML,groupsDialog,groupEditor,arrangeSelection,addRoutePoint,resetRoute,nudge,parseDocumentText,openDocumentFile,activateDocument,buildDocumentHTML,bindFolder,resolveMaterial,toggleNode,connectPorts,choosePort,undo,redo,combineSelected,tableHTML,sceneBounds,get document(){return DOC;}};
 init();

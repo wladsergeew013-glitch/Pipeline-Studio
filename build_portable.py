@@ -10,6 +10,8 @@ def build_html(project=None):
  else:scripts='<script>window.STUDIO_HOME=true;</script>'+scripts
  return '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pipeline Studio'+(' — документ' if project else '')+'</title><style id="style-source">'+css+'</style></head><body><div id="app"></div><div id="modal-root"></div><div id="toast" role="status"></div>'+scripts+'<script id="core-source">'+core.replace('</script','<\\/script')+'</script><script id="app-source">'+app.replace('</script','<\\/script')+'</script></body></html>'
 def build():
+ from tools.release_metadata import check
+ check(BASE,generated=False)
  (BASE/'Pipeline-Studio.html').write_text(build_html(),encoding='utf8',newline='\n')
  seed=json.loads((BASE/'app/data/seed.json').read_text('utf8'));p=BASE/'documents';p.mkdir(exist_ok=True)
  # Optional build-time normalization makes row-port IDs stable in the delivered document.
