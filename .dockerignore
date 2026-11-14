@@ -1,9 +1,8 @@
 **/__pycache__
 **/*.pyc
-app/data/project*.json
-app/data/materials.json
-app/data/assets
-app/data/publications
+# Only the public seed belongs in an image. Runtime state and grants stay outside.
+app/data/*
+!app/data/seed.json
 qa
 .env
 

@@ -1,29 +1,34 @@
 {
-  "version": "0.7.19",
-  "baseVersion": "0.7.18",
-  "baseCommit": "0837a8ecdd740fe7ae206f0b130d8df081150429",
+  "version": "0.7.21",
+  "baseVersion": "0.7.20",
+  "baseCommit": "74d0018fd23284f669e6e6e112e08bac3e37efea",
   "schemaVersion": 6,
   "publicRelease": true,
   "status": "release-ready",
-  "releaseDate": "2026-11-13",
-  "validationDate": "2026-11-13",
-  "report": "docs/MATERIAL-IDENTITY-2026-11-13.md",
+  "releaseDate": "2026-11-14",
+  "validationDate": "2026-11-14",
+  "report": "docs/REVIEW-0.7.21.md",
   "repository": "https://github.com/wladsergeew013-glitch/Pipeline-Studio",
   "validation": {
-    "reviewVmScenarios": 16,
-    "fileBridgeChecks": 34,
-    "localHttpTests": 27,
-    "ci": "github-actions-required-before-merge",
-    "modelAndBrowserSuite": "passed",
-    "localFullJsChecks": 982,
-    "pythonTests": 61,
+    "required": [
+      "model",
+      "http",
+      "browser",
+      "docker",
+      "windows-exe",
+      "ci"
+    ],
+    "reportIsAuthoritative": true,
+    "localFullJsChecks": 1063,
+    "pythonPassed": 74,
     "pythonSkipped": 1,
-    "packagedReviewChecks": 15,
+    "packagedReviewChecks": 23,
     "packagedDesktopChecks": 23,
-    "portableTransfer": "required-before-release"
+    "dockerChecks": 2,
+    "portableTransferChecks": 3,
+    "ci": "github-actions-required-before-merge"
   },
   "skippedReasons": [
-    "LibreOffice not installed; controlled converter regression retained",
-    "Private working document not tested"
+    "Private working documents are not part of synthetic release checks"
   ]
 }

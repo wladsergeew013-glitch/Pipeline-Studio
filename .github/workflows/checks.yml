@@ -12,6 +12,7 @@ jobs:
         with:
           node-version: '24'
       - run: python tools/checksums.py
+      - run: python tests/test_docker.py
       - run: npm install --no-save --package-lock=false playwright
       - run: npx playwright install --with-deps chromium
       - run: python tests/run_checks.py --browser
@@ -35,6 +36,7 @@ jobs:
       - run: npm run build --prefix desktop
       - run: node tests/test_desktop_files.js
       - run: node tests/test_editor_origin.js
+      - run: node tests/test_native_open_order.js
       - run: node tests/browser_review_desktop.js
       - run: node tests/browser_desktop.js
       - run: node tests/browser_portable_transfer.js

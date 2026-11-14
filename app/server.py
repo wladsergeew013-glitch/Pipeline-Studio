@@ -299,13 +299,13 @@ class Handler(BaseHTTPRequestHandler):
             mime='application/pdf' if aid==mat.get('previewAsset') else mat.get('mime','application/octet-stream')
             try:target=asset_path(aid)
             except ValueError:return self.json({'error':'Файл не найден'},404)
-            return self.file(target,mime,mat.get('filename','file'),download=('download' in q))
+            return self.file(target,mime,mat.get('filename','file'),download=('download' in q),material=True)
         if path.startswith('/api/'):return self.json({'error':'Неизвестный API'},404)
         if path=='/':path='/index.html'
         static=(BASE/'static'/path.lstrip('/')).resolve()
         if not static.is_relative_to((BASE/'static').resolve()):return self.json({'error':'Недопустимый путь'},403)
         self.file(static,mimetypes.guess_type(str(static))[0] or 'application/octet-stream')
-    def file(self,path,mime,name=None,download=False):
+    def file(self,path,mime,name=None,download=False,material=False):
         try:mime,base_mime=checked_mime(mime)
         except ValueError as e:return self.json({'error':str(e)},400)
         if not path.is_file():return self.json({'error':'Файл не найден'},404)
@@ -321,7 +321,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status);self.send_header('Content-Type',mime);self.send_header('Content-Length',str(max(0,end-start+1)));self.send_header('Accept-Ranges','bytes');self.send_header('X-Content-Type-Options','nosniff');self.send_header('Cache-Control','private, no-cache')
         if status==206:self.send_header('Content-Range',f'bytes {start}-{end}/{size}')
         safe_inline=base_mime.startswith(('image/','video/','audio/')) or base_mime=='application/pdf'
-        if name:self.send_header('Content-Disposition',f"{'inline' if safe_inline and not download else 'attachment'}; filename*=UTF-8''{quote(name)}")
+        if material:
+            filename=name if isinstance(name,str) and name.strip() else 'file'
+            self.send_header('Content-Disposition',f"{'inline' if safe_inline and not download else 'attachment'}; filename*=UTF-8''{quote(filename)}")
         if base_mime=='image/svg+xml':self.send_header('Content-Security-Policy',"sandbox; default-src 'none'; style-src 'unsafe-inline'")
         self.end_headers()
         if self.command=='HEAD':return

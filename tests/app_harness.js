@@ -5,6 +5,7 @@ function app({normalize=false}={}){
  const context=vm.createContext({Core,URL,Blob,File,DOMException,Event,console,EMOJI:{},Map,Set,Date,Promise,location:{protocol:'file:',hostname:'',origin:'file://',href:'file:///C:/Project/Process.html',pathname:'/C:/Project/Process.html'},document:{activeElement:null,addEventListener(){},querySelector(){return null}},window:{addEventListener(){}},setTimeout:()=>0,clearTimeout(){}});
  vm.runInContext(source,context);const run=s=>vm.runInContext(s,context);
  run("renderShell=render=renderTop=renderInspector=fit=updateStatus=toast=closeFilePopover=closeNodeStatus=closeModal=()=>{};apiPut=async()=>({revision:1});");
+ run("if(typeof finishInitialization==='function')finishInitialization()");
  if(!normalize)run('normalize=x=>x');
  return {context,run,studio:context.window.Studio};
 }

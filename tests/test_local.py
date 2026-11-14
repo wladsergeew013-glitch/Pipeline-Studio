@@ -86,4 +86,12 @@ class LocalTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.files.command('save',{'nativePath':str(target),'digest':meta['digest'],'text':text})
         self.assertEqual(target.read_text('utf8'),'existing')
 
+    def test_29_oversized_picker_checks_stat_before_reading_bytes(self):
+        from unittest.mock import patch
+        doc=self.root/'Oversized.html'
+        with doc.open('wb') as f:f.truncate(40*1024*1024+1)
+        self.picked=doc
+        with patch.object(Path,'read_bytes',side_effect=AssertionError('oversized bytes read')):
+            self.assertEqual(self.command('pick-document',{})[0],400)
+
 if __name__=='__main__':unittest.main(verbosity=2)
