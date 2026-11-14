@@ -1,6 +1,7 @@
 'use strict';
-const {app,BrowserWindow,ipcMain,dialog,shell,Menu}=require('electron'),path=require('node:path'),fs=require('node:fs'),{pathToFileURL}=require('node:url'),{FileBridge,EXTENSIONS}=require('./file-bridge.cjs');
+const {app,BrowserWindow,ipcMain,dialog,shell,Menu,protocol,net}=require('electron'),path=require('node:path'),fs=require('node:fs'),{pathToFileURL}=require('node:url'),{FileBridge,EXTENSIONS}=require('./file-bridge.cjs');
 const {createEditorURLValidator,isEditorSender}=require('./editor-origin.cjs');
+protocol.registerSchemesAsPrivileged([{scheme:'studio-pdf',privileges:{standard:true,secure:true,supportFetchAPI:true,allowExtensions:true}}]);
 app.setName('Pipeline Studio');
 const testProfile=process.argv.indexOf('--studio-test-profile');app.setPath('userData',testProfile>=0?path.resolve(process.argv[testProfile+1]):path.join(app.getPath('appData'),'Pipeline Studio'));
 let win,bridge,ready=false,externalOpenVersion=0;const startupOpenVersion=++externalOpenVersion;const pendingArgs=[],ui=path.join(__dirname,'ui','Pipeline-Studio.html'),uiURL=pathToFileURL(ui).href,hidden=process.argv.includes('--studio-hidden');
@@ -14,6 +15,23 @@ if(!app.requestSingleInstanceLock()){app.quit()}else{
   const executable=process.env.PORTABLE_EXECUTABLE_FILE||process.execPath,root=app.isPackaged?path.dirname(executable):path.resolve(__dirname,'..');
   bridge=new FileBridge({root,state:path.join(app.getPath('userData'),'file-access.json'),picker:async(route,data)=>{const filters=route==='pick'?[{name:'Материалы',extensions:[...EXTENSIONS].map(e=>e.slice(1))}]:[{name:'Документ Pipeline Studio',extensions:route==='pick-save'?['html','htm']:['html','htm','json']}];if(route==='pick-save'){const name=data.name||'Новый процесс.html',r=await dialog.showSaveDialog(win,{title:'Сохранить документ Pipeline Studio',defaultPath:data.documentPath?path.join(path.dirname(data.documentPath),name):name,filters});return r.canceled?null:r.filePath;}const r=await dialog.showOpenDialog(win,{title:route==='pick-document'?'Открыть документ Pipeline Studio':'Выбрать оригинал',defaultPath:data.documentPath?path.dirname(data.documentPath):app.getPath('documents'),properties:['openFile'],filters});return r.canceled?null:r.filePaths[0];},opener:async(p,folder)=>{if(folder){shell.showItemInFolder(p);return;}const error=await shell.openPath(p);if(error)throw Error(error);}});
   if(app.isPackaged&&process.argv.some(a=>a.startsWith('pipelinestudio://'))){await handleArgs(process.argv);app.quit();return;}
+  // PDF material frames have their own origin and can never serve HTML or unsigned files.
+  protocol.handle('studio-pdf',async request=>{
+   if(!['GET','HEAD'].includes(request.method))return new Response('',{status:405});
+   try{
+    const info=await bridge.pdfSource(request.url);if(info.state!=='ok')throw Error('PDF недоступен');
+    const range=request.headers.get('Range'),match=range&&/^bytes=(\d*)-(\d*)$/.exec(range);let start=0,end=info.size-1;
+    if(range){if(match&&(match[1]||match[2])){start=match[1]?Number(match[1]):Math.max(0,info.size-Number(match[2]));end=match[1]&&match[2]?Math.min(end,Number(match[2])):end;}else start=info.size;
+     if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start>=info.size||end<start)return new Response(null,{status:416,headers:{'Content-Range':'bytes */'+info.size,'Cache-Control':'no-store'}});
+    }
+    const headers=new Headers({'Content-Type':'application/pdf','X-Content-Type-Options':'nosniff','Cache-Control':'no-store','Content-Security-Policy':'frame-ancestors file: studio-pdf:','Accept-Ranges':'bytes','Content-Length':String(end-start+1)});
+    if(range)headers.set('Content-Range',`bytes ${start}-${end}/${info.size}`);
+    if(request.method==='HEAD')return new Response(null,{status:range?206:200,headers});
+    const response=await net.fetch(info.fileURL,{headers:range?{Range:`bytes=${start}-${end}`}:{}});
+    return new Response(response.body,{status:range?206:response.status,headers});
+   }
+   catch{return new Response('PDF недоступен',{status:403,headers:{'Content-Type':'text/plain; charset=utf-8','Content-Security-Policy':"sandbox; default-src 'none'"}});}
+  });
   win=new BrowserWindow({width:1440,height:940,minWidth:900,minHeight:600,title:'Pipeline Studio',show:!hidden,backgroundColor:'#f7f8fc',icon:path.join(__dirname,'icon.ico'),webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,plugins:true}});
   Menu.setApplicationMenu(null);
   ipcMain.handle('studio:file',async(event,route,data)=>{if(!isEditorSender(event,win.webContents,isEditorURL))throw Error('Команда доступна только редактору Studio');if(route==='open-url'){const u=new URL(data.url);if(!['http:','https:'].includes(u.protocol))throw Error('Нужен HTTP / HTTPS адрес');await shell.openExternal(u.href);return {opened:true};}if(!['pick','pick-document','pick-save','stat','link','read-document','open','folder','save'].includes(route))throw Error('Неизвестная команда');return bridge.command(route,data);});

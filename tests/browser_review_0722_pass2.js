@@ -1,0 +1,30 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{pathToFileURL}=require('node:url'),{playwright,launchOptions}=require('./browser_runtime'),C=require('../app/static/core.js');
+const B=path.resolve(__dirname,'..'),checks=[],errors=[],check=(name,ok)=>{assert(ok,name);checks.push(name);console.log('PASS',name)};
+const node=(id,x=0,y=0,extra={})=>({id,title:id,type:'block',x,y,w:120,h:50,fontSize:14,fill:'#fff',stroke:'#888',materials:[],icons:[],...extra});
+const edge=(id,source,target,extra={})=>({id,source,target,sourcePort:'right',targetPort:'left',arrow:true,...extra});
+const fixture=()=>({format:'pipeline-studio',schemaVersion:6,id:'pass2',title:'Pass two',revision:0,materials:[],viewState:{compact:false,collapsed:{p:[]}},pages:[{id:'p',title:'Page',collapseMode:'nodes',nodes:[],edges:[],buses:[],groups:[],drawings:[],layoutOptions:{autoSpace:false}}]});
+(async()=>{const browser=await playwright.chromium.launch(launchOptions),p=await browser.newPage({viewport:{width:1440,height:1000}});p.on('pageerror',e=>errors.push(e.message));p.setDefaultTimeout(15000);
+const activate=project=>p.evaluate(async project=>{await Studio.activateDocument(project,{name:'Review.html'});Studio.fit()},project),positions=()=>p.evaluate(()=>Studio.state.display.nodes.map(n=>[n.id,n.x,n.y]));
+try{
+ await p.goto(pathToFileURL(path.join(B,'Pipeline-Studio.html')).href);await p.waitForSelector('#home-new');
+ for(const command of ['inspector','context','bulk']){
+  const f=fixture();f.pages[0].nodes=[node('a',0,0,{collapsible:true}),node('b',0,10,{collapsible:true}),node('other',900,900)];f.pages[0].layoutOptions.autoSpace=true;await activate(f);const before=await positions();assert.equal(before.find(n=>n[0]==='b')[2],114);
+  await p.evaluate(bulk=>{Studio.state.selected=new Set(bulk?['b','other']:['b']);Studio.render()},command==='bulk');
+  if(command==='inspector')await p.locator('#node-locked').check();else if(command==='bulk')await p.locator('[data-bulk-key="locked"]').selectOption('true');else{await p.locator('#nodes [data-node="b"]').click({button:'right'});await p.locator('[data-context="lock"]').click()}
+  check('V21-18 actual '+command+' lock keeps all visible positions',JSON.stringify(await positions())===JSON.stringify(before));await p.keyboard.press('Control+z');await p.keyboard.press('Control+y');check('V21-18 '+command+' lock remains stable through keyboard Undo/Redo',JSON.stringify(await positions())===JSON.stringify(before));
+  check('V21-18 '+command+' lock survives full HTML reopening',await p.evaluate(async before=>{const project=Studio.parseDocumentText(await Studio.buildDocumentHTML(await Studio.portableProject(false)));await Studio.activateDocument(project,{name:'Locked.html'});return JSON.stringify(Studio.state.display.nodes.map(n=>[n.id,n.x,n.y]))===JSON.stringify(before)},before));
+ }
+ for(const id of ['b','image']){
+  const f=fixture(),pg=f.pages[0];pg.nodes=[node('a'),node('b',300,0),node('c',300,300),node('image',315,25,{type:'image',anchorId:'b',anchorX:15,anchorY:25})];pg.edges=[edge('ab','a','b',{bus:'comb'}),edge('ac','a','c',{bus:'comb'})];pg.buses=[{id:'comb',hub:'a',mode:'out',port:'right',symmetry:true,alignGap:240}];await activate(f);const before=(await positions()).find(n=>n[0]===id);await p.evaluate(id=>{Studio.state.selected=new Set([id]);Studio.render()},id);await p.keyboard.press('Control+d');
+  const copied=await p.evaluate(()=>[...Studio.state.selected][0]);check('V21-19 actual Ctrl+D duplicates '+id+' beside its visible position',await p.evaluate(({copied,before})=>{const v=Studio.state.display.nodes.find(n=>n.id===copied);return v.x===before[1]+38&&v.y===before[2]+38},{copied,before}));await p.keyboard.press('Control+z');await p.keyboard.press('Control+y');
+  check('V21-19 duplicate '+id+' keeps its position through Undo/Redo and HTML',await p.evaluate(async({copied,before})=>{const project=Studio.parseDocumentText(await Studio.buildDocumentHTML(await Studio.portableProject(false)));await Studio.activateDocument(project,{name:'Copies.html'});const v=Studio.state.display.nodes.find(n=>n.id===copied);return v.x===before[1]+38&&v.y===before[2]+38},{copied,before}));
+ }
+ for(const mode of ['nodes','groups'])for(const reverse of [false,true]){
+  const f=fixture(),pg=f.pages[0],t=node('t',100,100,{type:'table',table:{cells:[[{text:'One'}],[{text:'Two'}]],widths:[200]}});pg.collapseMode=mode;C.initTable(t);t.table.rowBehavior=Object.fromEntries(t.table.rowIds.map(id=>[id,{collapsible:true}]));pg.nodes=[t,node('a',500,100),node('b',500,350),node('external',-300,100)];pg.edges=t.table.rowIds.map((r,i)=>edge('row'+i,'t',i?'b':'a',{sourcePort:C.ports(t).find(p=>p.rowId===r&&p.side==='right').id}));pg.edges.push(...['a','b'].map((id,i)=>reverse?edge('external'+i,id,'external',{parentRole:'none',flow:false,arrow:false,arrowStart:true}):edge('external'+i,'external',id,{parentRole:'none',flow:false})));await activate(f);await p.locator('[data-collapse-row]').nth(0).click();await p.locator('[data-collapse-row]').nth(1).click();
+  check('V21-20 '+mode+(reverse?' reverse':' forward')+' row buttons preserve both incoming row identities',await p.evaluate(reverse=>{const es=Studio.state.display.edges.filter(e=>e.id.startsWith('external'));return es.length===2&&new Set(es.map(e=>reverse?e.sourcePort:e.targetPort)).size===2&&Studio.state.project.pages[0].edges.length===4},reverse));await p.locator('[data-action="expand-all"]').click();check('V21-20 expanding '+mode+' restores all original links',await p.evaluate(()=>Studio.state.display.edges.length===4));
+ }
+ check('Pass-two browser interactions produce no uncaught errors',errors.length===0);await p.screenshot({path:path.join(B,'qa/review-pass2-browser.png')});
+}finally{if(!p.isClosed())await p.evaluate(()=>{Studio.state.dirty=false;Studio.state.fileDirty=false}).catch(()=>{});await browser.close();fs.writeFileSync(path.join(B,'qa/review-pass2-browser.json'),JSON.stringify({checks,errors},null,2))}
+console.log('TOTAL',checks.length);
+})().catch(e=>{console.error(e);process.exitCode=1});

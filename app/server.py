@@ -3,7 +3,7 @@ The default bind is 127.0.0.1. A LAN bind requires STUDIO_PASSWORD.
 For a real deployment put an authenticated HTTPS reverse proxy in front.
 """
 from __future__ import annotations
-import argparse, base64, copy, hashlib, hmac, io, json, math, mimetypes, os, re, secrets, shutil, subprocess, tempfile, threading, time, uuid, zipfile
+import argparse, base64, copy, hashlib, hmac, io, json, math, mimetypes, os, re, secrets, shutil, socket, subprocess, tempfile, threading, time, uuid, zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from html.parser import HTMLParser
 from pathlib import Path
@@ -51,6 +51,21 @@ def commit_materials(materials):
     commit_state(p,materials)
     return p['revision']
 
+def discard_uncommitted_upload(target):
+    # A commit can have succeeded even if its caller raised before returning.
+    # Only remove this request's blob when the authoritative state proves it unused.
+    try:state=load(DATA/'state.json')
+    except (OSError,ValueError):return
+    if state is None:return
+    pending=[state]
+    while pending:
+        value=pending.pop()
+        if isinstance(value,dict):
+            if value.get('asset')==target.name or value.get('previewAsset')==target.name:return
+            pending.extend(item for item in value.values() if isinstance(item,(dict,list)))
+        elif isinstance(value,list):pending.extend(item for item in value if isinstance(item,(dict,list)))
+    target.unlink(missing_ok=True)
+
 def initialize():
     with LOCK:
         if (DATA/'state.json').exists():return
@@ -75,11 +90,15 @@ def check_presentation(obj):
     for pg in obj.get('pages',[]):
         for n in pg.get('nodes',[]):
             number(n,'fontSize',1,1000,True)
-            if n.get('table'):
+            for key in ('w','h'):number(n,key,1,1e7)
+            if n.get('table') is not None:
                 t=n['table']
+                if not isinstance(t,dict) or not isinstance(t.get('cells',[]),list):raise ValueError('Некорректная таблица')
                 if 'wordWrap' in t and t['wordWrap'] not in ('words','hyphenate'):raise ValueError('Некорректный перенос слов')
                 for row in t.get('cells',[]):
+                    if not isinstance(row,list):raise ValueError('Некорректная строка таблицы')
                     for cell in row:
+                        if cell is not None and not isinstance(cell,dict):raise ValueError('Некорректная ячейка таблицы')
                         if cell:number(cell,'fontSize',1,1000)
         for item in pg.get('edges',[])+pg.get('buses',[])+pg.get('drawings',[]):
             number(item,'width',0,1000);number(item,'fontSize',1,1000)
@@ -167,7 +186,7 @@ def used_materials(project):
             if n.get('imageMaterial'):out.add(n['imageMaterial'])
             for ic in n.get('icons',[]):
                 if ic.get('material'):out.add(ic['material'])
-            for row in n.get('table',{}).get('cells',[]):
+            for row in (n.get('table') or {}).get('cells',[]):
                 for c in row:
                     if c:
                         if c.get('material'):out.add(c['material'])
@@ -398,17 +417,21 @@ class Handler(BaseHTTPRequestHandler):
                 mat={'id':'m-'+uuid.uuid4().hex,'title':name,'kind':kind,'asset':aid,'filename':name,'mime':mime,'size':size,'version':1,'status':'Загружен'}
                 replace=self.headers.get('X-Replace-Material')
                 with LOCK:
-                    expected=self.headers.get('X-Project-Revision')
-                    if expected is not None and expected!=str(load(DATA/'project.json')['revision']):
-                        target.unlink(missing_ok=True);raise Conflict('Проект изменён в другом окне. Перезагрузите проект перед загрузкой.')
-                    mats=load(DATA/'materials.json',[])
-                    prev=next((m for m in mats if m['id']==replace),None)
-                    if replace and not prev:raise ValueError('Материал для замены не найден')
-                    if prev:
-                        mat['id']=prev['id'];mat['version']=prev.get('version',1)+1;mat['title']=prev['title'];mat['history']=prev.get('history',[])+[{k:prev.get(k) for k in ('asset','filename','version')}]
-                        mats=[mat if m['id']==replace else m for m in mats]
-                    else:mats.append(mat)
-                    revision=commit_materials(mats)
+                    try:
+                        expected=self.headers.get('X-Project-Revision')
+                        if expected is not None and expected!=str(load(DATA/'project.json')['revision']):raise Conflict('Проект изменён в другом окне. Перезагрузите проект перед загрузкой.')
+                        mats=load(DATA/'materials.json',[])
+                        prev=next((m for m in mats if m['id']==replace),None)
+                        if replace and not prev:raise ValueError('Материал для замены не найден')
+                        if prev:
+                            mat['id']=prev['id'];mat['version']=prev.get('version',1)+1;mat['title']=prev['title'];mat['history']=prev.get('history',[])+[{k:prev.get(k) for k in ('asset','filename','version')}]
+                            mats=[mat if m['id']==replace else m for m in mats]
+                        else:mats.append(mat)
+                        revision=commit_materials(mats)
+                    except Exception:
+                        try:discard_uncommitted_upload(target)
+                        except OSError:pass
+                        raise
                 return self.json({**wire_materials([mat])[0],'projectRevision':revision})
             if path.startswith('/api/preview/'):
                 mid=path.rsplit('/',1)[1]
@@ -450,11 +473,15 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError,ConnectionResetError):pass
         except Exception as e:self.json({'error':str(e)},500)
 
+class IPv6HTTPServer(ThreadingHTTPServer):
+    address_family=socket.AF_INET6
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--host',default='127.0.0.1');parser.add_argument('--port',default=8765,type=int);parser.add_argument('--open',action='store_true');a=parser.parse_args()
     if a.host not in ('127.0.0.1','localhost','::1') and not PASSWORD:parser.error('Для локальной сети задайте STUDIO_PASSWORD и при необходимости STUDIO_READER_PASSWORD')
-    initialize();server=ThreadingHTTPServer((a.host,a.port),Handler)
-    url=f'http://127.0.0.1:{a.port}';print(f'Pipeline Studio: {url} | Data: {DATA}',flush=True)
+    initialize();server=(IPv6HTTPServer if ':' in a.host else ThreadingHTTPServer)((a.host,a.port),Handler)
+    host='127.0.0.1' if a.host=='0.0.0.0' else '::1' if a.host=='::' else a.host
+    url=f'http://{("["+host+"]") if server.address_family==socket.AF_INET6 else host}:{server.server_port}';print(f'Pipeline Studio: {url} | Data: {DATA}',flush=True)
     if a.open:
         import webbrowser
         threading.Timer(.7,lambda:webbrowser.open(url)).start()

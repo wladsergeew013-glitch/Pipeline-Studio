@@ -94,4 +94,37 @@ class LocalTests(unittest.TestCase):
         with patch.object(Path,'read_bytes',side_effect=AssertionError('oversized bytes read')):
             self.assertEqual(self.command('pick-document',{})[0],400)
 
+    def test_30_save_receipt_confirms_own_payload_after_an_external_replacement(self):
+        import hashlib
+        from unittest.mock import patch
+        import local
+        doc=self.root/'Ack.html';doc.write_text('<script id="pipeline-document">OLD</script>',encoding='utf8');self.picked=doc
+        base=self.command('pick-document',{})[1];own='<script id="pipeline-document">СВОЯ ЗАПИСЬ</script>';external=b'EXTERNAL EDIT';replace=local.os.replace
+        def intervening(source,target):
+            replace(source,target)
+            if Path(target)==doc:doc.write_bytes(external)
+        with patch.object(local.os,'replace',side_effect=intervening):
+            status,receipt=self.command('save',{'nativePath':str(doc),'digest':base['digest'],'text':own})
+        self.assertEqual(status,200);expected=hashlib.sha256(own.encode('utf8')).hexdigest()
+        self.assertEqual(self.command('save',{'nativePath':str(doc),'digest':expected,'text':own})[0],409)
+        self.assertEqual(doc.read_bytes(),external);self.assertEqual(receipt['digest'],expected)
+        self.assertEqual(self.command('save',{'nativePath':str(doc),'digest':receipt['digest'],'text':own})[0],409);self.assertEqual(doc.read_bytes(),external)
+
+    def test_31_save_as_accepts_an_oversized_existing_destination(self):
+        doc=self.root/'LargeDestination.html'
+        with doc.open('wb') as f:f.truncate(40*1024*1024+1)
+        self.picked=doc;self.assertEqual(self.command('pick-document',{})[0],400)
+        status,target=self.command('pick-save',{});self.assertEqual(status,200)
+        text='<script id="pipeline-document">NEW</script>'
+        self.assertEqual(self.command('save',{**target,'text':text})[0],200);self.assertEqual(doc.read_text('utf8'),text)
+
+    def test_32_pdf_view_requires_pdf_mime_and_signature(self):
+        for filename,body,expected in [('valid.pdf',b'%PDF-1.4\nsynthetic',200),('disguised.pdf',b'<html><script>bad()</script></html>',400),('active.html',b'%PDF-1.4\n<html>bad</html>',400)]:
+            with self.subTest(filename=filename):
+                source=self.root/filename;source.write_bytes(body)
+                code,info=self.command('stat',{'nativePath':str(source),'pdf':True})
+                self.assertEqual(code,expected)
+                if expected==200:self.assertEqual(info['mime'],'application/pdf');self.assertIs(info['pdf'],True)
+                self.assertEqual(self.command('stat',{'nativePath':str(source)})[0],200)
+
 if __name__=='__main__':unittest.main(verbosity=2)

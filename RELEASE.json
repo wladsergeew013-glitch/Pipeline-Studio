@@ -1,13 +1,15 @@
 {
-  "version": "0.7.21",
-  "baseVersion": "0.7.20",
-  "baseCommit": "74d0018fd23284f669e6e6e112e08bac3e37efea",
+  "version": "0.7.22",
+  "baseVersion": "0.7.21",
+  "baseCommit": "b9a2644dd4a8b9f774140491d1cb6bc56f8cb301",
   "schemaVersion": 6,
   "publicRelease": true,
-  "status": "release-ready",
+  "status": "prerelease",
+  "tag": "v0.7.22-rc.1",
+  "releaseUrl": "https://github.com/wladsergeew013-glitch/Pipeline-Studio/releases/tag/v0.7.22-rc.1",
   "releaseDate": "2026-11-14",
   "validationDate": "2026-11-14",
-  "report": "docs/REVIEW-0.7.21.md",
+  "report": "docs/REVIEW-0.7.22.md",
   "repository": "https://github.com/wladsergeew013-glitch/Pipeline-Studio",
   "validation": {
     "required": [
@@ -19,16 +21,30 @@
       "ci"
     ],
     "reportIsAuthoritative": true,
-    "localFullJsChecks": 1063,
-    "pythonPassed": 74,
-    "pythonSkipped": 1,
-    "packagedReviewChecks": 23,
-    "packagedDesktopChecks": 23,
-    "dockerChecks": 2,
-    "portableTransferChecks": 3,
-    "ci": "github-actions-required-before-merge"
+    "localResults": {
+      "mainJSChecks": 1149,
+      "pythonPassed": 86,
+      "pythonSkipped": 1,
+      "packagedReview": 42,
+      "desktop": 23,
+      "portableTransfer": 3,
+      "portableStartupTimeoutMs": 120000,
+      "docker": 2,
+      "materials": {
+        "files": 11,
+        "sourceEditor": 36,
+        "localLauncher": 30
+      },
+      "officeDocker": {
+        "serverTestsPassed": 26,
+        "skipped": 0,
+        "formats": ["rtf", "docx", "pptx"]
+      },
+      "ci": "required-before-publication"
+    }
   },
   "skippedReasons": [
+    "The Windows host suite skips its local LibreOffice test; the full HTTP suite including real RTF/DOCX/PPTX conversion is separately verified in Docker",
     "Private working documents are not part of synthetic release checks"
   ]
 }

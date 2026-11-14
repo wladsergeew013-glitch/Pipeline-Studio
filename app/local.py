@@ -4,7 +4,7 @@ The UI remains the portable HTML. Selected sources are opened/read at their actu
 paths; only chosen files and document folders are remembered, not file contents.
 """
 from __future__ import annotations
-import argparse, ctypes, hashlib, hmac, json, mimetypes, os, secrets, subprocess, threading, webbrowser
+import argparse, ctypes, hashlib, hmac, json, mimetypes, os, re, secrets, subprocess, threading, webbrowser
 from ctypes import wintypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -12,6 +12,12 @@ from urllib.parse import urlsplit, parse_qs, quote
 
 BASE=Path(__file__).resolve().parents[1]
 EXTENSIONS=set('.pdf .doc .docx .odt .rtf .ppt .pptx .odp .xls .xlsx .ods .csv .txt .png .jpg .jpeg .gif .webp .svg .mp4 .webm .mov .mkv .mp3 .wav .ogg .html .htm .json .zip'.split())
+
+def file_digest(path):
+    digest=hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        for chunk in iter(lambda:stream.read(1024*1024),b''):digest.update(chunk)
+    return digest.hexdigest()
 
 def pick_file(document=False,save=False,name=''):
     if os.name!='nt':raise ValueError('Системный выбор файла доступен в Windows')
@@ -82,7 +88,7 @@ class LocalFiles:
             if document and st.st_size>40*1024*1024:raise ValueError('Документ превышает 40 МБ')
             with p.open('rb') as readable:readable.read(1)
             out.update(state='ok',size=st.st_size,lastModified=int(st.st_mtime*1000),mime=mimetypes.guess_type(p.name)[0] or 'application/octet-stream',key=hashlib.sha256(str(p).encode()).hexdigest(),detail='Исходный файл найден на диске')
-            if document:out['digest']=hashlib.sha256(p.read_bytes()).hexdigest()
+            if document:out['digest']=file_digest(p)
         except FileNotFoundError:out.update(state='missing',detail='Исходный файл перемещён или удалён')
         except PermissionError:out.update(state='denied',detail='Нет доступа к исходному файлу')
         return out
@@ -97,14 +103,22 @@ class LocalFiles:
             if p is None:return {'cancelled':True}
             p=self.remember(p,document=route!='pick')
             if route=='pick-save' and p.suffix.lower() not in ('.html','.htm'):raise ValueError('Сохраните документ как HTML')
-            info=self.metadata(p,document=route!='pick');info['openKey']=self.open_key(p)
+            info=self.metadata(p,document=route=='pick-document')
+            if route=='pick-save' and info['state']=='ok':info['digest']=file_digest(p)
+            info['openKey']=self.open_key(p)
             doc=data.get('documentPath')
             if doc:
                 try:info['path']=Path(os.path.relpath(p,Path(doc).resolve().parent)).as_posix()
                 except ValueError:info['path']=''
             return info
         p=self.resolve(data)
-        if route=='stat':return self.metadata(p)
+        if route=='stat':
+            info=self.metadata(p)
+            if data.get('pdf') and info['state']=='ok':
+                with p.open('rb') as stream:header=stream.read(8)
+                if info['mime']!='application/pdf' or not re.fullmatch(rb'%PDF-\d\.\d',header):raise ValueError('Для просмотра нужен файл PDF с корректной сигнатурой')
+                info['pdf']=True
+            return info
         if route=='link':return {'nativePath':str(p),'openKey':self.open_key(p)}
         if route in ('open','folder'):
             if not p.is_file():raise FileNotFoundError('Исходный файл перемещён или удалён: '+str(p))
@@ -115,11 +129,11 @@ class LocalFiles:
             if not isinstance(text,str) or 'id="pipeline-document"' not in text:raise ValueError('Нужен HTML документа Studio')
             if len(text.encode('utf8'))>40*1024*1024:raise ValueError('Документ превышает 40 МБ')
             with self.lock:
-                if p.exists() and hashlib.sha256(p.read_bytes()).hexdigest()!=data.get('digest'):raise FileExistsError('Исходный HTML изменён другим процессом. Используйте «Сохранить как».')
+                if p.exists() and file_digest(p)!=data.get('digest'):raise FileExistsError('Исходный HTML изменён другим процессом. Используйте «Сохранить как».')
                 temp=p.with_name(p.name+'.studio-'+secrets.token_hex(5)+'.tmp')
                 try:temp.write_text(text,encoding='utf-8',newline='\n');os.replace(temp,p)
                 finally:temp.unlink(missing_ok=True)
-            return self.metadata(p,document=True)
+            return {**self.metadata(p),'digest':hashlib.sha256(text.encode('utf8')).hexdigest(),'size':len(text.encode('utf8'))}
         raise ValueError('Неизвестная команда')
 
 class LocalServer(ThreadingHTTPServer):

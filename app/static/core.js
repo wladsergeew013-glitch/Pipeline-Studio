@@ -3,6 +3,7 @@
 'use strict';
 const clone=x=>JSON.parse(JSON.stringify(x));
 const uid=prefix=>prefix+'-'+(globalThis.crypto?.randomUUID?.()||Date.now().toString(36)+Math.random().toString(36).slice(2));
+const proxyKey=(source,target,sourcePort,targetPort,e)=>JSON.stringify([source,target,sourcePort||'right',targetPort||'left',e.arrowStart===true,e.arrow!==false,e.dashed===true,e.flow===false]);
 const defaultPorts=()=>[{id:'left',side:'left',x:0,y:.5},{id:'right',side:'right',x:1,y:.5},{id:'top',side:'top',x:.5,y:0},{id:'bottom',side:'bottom',x:.5,y:1}];
 function ports(n){const out=[...(n.ports||[])];for(const p of defaultPorts())if(!out.some(x=>x.id===p.id))out.push(p);return out;}
 function port(n,id,fallback='right') { return ports(n).find(p=>p.id===id)||defaultPorts().find(p=>p.id===fallback); }
@@ -88,11 +89,12 @@ function display(page,collapsed=new Set(),compact=true,foldedTables=new Set()){
   const src=map.get(e.source),dst=map.get(e.target);if(!src||!dst||src===dst&&e.source!==e.target)continue;
   const proxy=src!==e.source||dst!==e.target;
   // Never merge real parallel edges. Only aggregate collapsed boundary connections.
-  const key=proxy?[src,dst,src===e.source?e.sourcePort:'',dst===e.target?e.targetPort:'',e.arrow!==false,e.dashed===true].join('|'):'edge:'+e.id;
-  const ex=edgeMap.get(key);if(ex){ex.count++;ex.originalIds.push(e.id);if(e.label&&!ex.label.split(' / ').includes(e.label))ex.label=[ex.label,e.label].filter(Boolean).join(' / ');continue;}
+  const key=proxy?proxyKey(src,dst,src===e.source?e.sourcePort:'right',dst===e.target?e.targetPort:'left',e):'edge:'+e.id;
+  const ex=edgeMap.get(key);if(ex){ex.count++;ex.originalIds.push(e.id);if(e.label&&!(ex.label||'').split(' / ').includes(e.label))ex.label=[ex.label,e.label].filter(Boolean).join(' / ');continue;}
   edgeMap.set(key,{...e,source:src,target:dst,sourcePort:src===e.source?e.sourcePort:'right',targetPort:dst===e.target?e.targetPort:'left',count:1,proxy,originalIds:[e.id]});
  }
- return {nodes:out,edges:[...edgeMap.values()],frames,map};
+ const hidden=new Set(page.nodes.filter(n=>map.get(n.id)!==n.id).map(n=>n.id)),hiddenOwner=new Map([...hidden].map(id=>[id,map.get(id)]));
+ return {nodes:out,edges:[...edgeMap.values()],frames,map,hidden,hiddenOwner,buses:page.buses||[]};
 }
 /** Bake a projected compact view before precise manual positioning. Hidden contents are translated, not discarded. */
 function materializeLayout(page,d){
@@ -172,7 +174,7 @@ function autoLayout(page,groupId){
  for(const [,col] of [...columns.entries()].sort((a,b)=>a[0]-b[0])){let y=50;col.sort((a,b)=>a.y-b.y).forEach(n=>{n.x=x;n.y=y;n.offsetX=0;n.offsetY=0;y+=n.h+58;});x+=Math.max(...col.map(n=>n.w))+130;}
  return p;
 }
-const api={clone,uid,ports,port,endpoint,bounds,validateTable,mergeTable,splitTable,normalizedRange,display,edgePath,autoLayout,hierarchy,reparentGroup,dissolveGroup,materializeLayout,arrange,tableAxis};root.Core=api;if(typeof module!=='undefined')module.exports=api;
+const api={clone,uid,proxyKey,ports,port,endpoint,bounds,validateTable,mergeTable,splitTable,normalizedRange,display,edgePath,autoLayout,hierarchy,reparentGroup,dissolveGroup,materializeLayout,arrange,tableAxis};root.Core=api;if(typeof module!=='undefined')module.exports=api;
 })(globalThis);
 /* 0.3 model: graph-driven collapse, persistent row ports and shared connection buses. */
 (function(root){
@@ -516,9 +518,8 @@ function display(pg,collapsed=new Set(),compact=true,folded=new Set(),options={}
   // Never redirect one folded root to another root merely because they share hidden descendants.
   if(th&&state.roots.includes(e.source)&&state.sets.get(e.source)?.has(e.target))continue;
   if(sh&&state.roots.includes(e.target)&&state.sets.get(e.target)?.has(e.source))continue;
-  const proxy=sh||th,rowOwner=sh&&rowState?.owners.get(e.source),rowNode=rowOwner?.row&&pg.nodes.find(n=>n.id===source),rowPort=rowNode&&C.ports(rowNode).find(p=>p.rowId===rowOwner.row&&p.side==='right');
-   const sourcePort=sh?(rowPort?.id||'right'):e.sourcePort,targetPort=th?'left':e.targetPort;
-   const key=proxy?JSON.stringify([source,target,sourcePort||'right',targetPort||'left',e.arrowStart===true,e.arrow!==false,e.dashed===true,e.flow===false]):'edge:'+e.id;
+  const proxy=sh||th,sourcePort=sh?C.rowProxyPort(pg,rowState,e.source,source,'right'):e.sourcePort,targetPort=th?C.rowProxyPort(pg,rowState,e.target,target,'left'):e.targetPort;
+   const key=proxy?C.proxyKey(source,target,sourcePort,targetPort,e):'edge:'+e.id;
    if(dedupe.has(key)){const out=dedupe.get(key);out.count++;out.originalIds.push(e.id);continue;}
    const out={...e,source,target,sourcePort,targetPort,proxy,count:1,originalIds:[e.id]};
    if(proxy){delete out.waypoints;delete out.points;delete out.bus;}edges.push(out);dedupe.set(key,out);
@@ -1055,9 +1056,9 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
   const state=rowCollapseState(pg,rows,folds),hidden=new Set([...d.hidden,...state.hidden]),byId=new Map(pg.nodes.map(n=>[n.id,n]));
   d.nodes=d.nodes.filter(n=>!hidden.has(n.id));const shown=new Set(d.nodes.map(n=>n.id));
   for(const id of state.hidden){d.hiddenOwner.set(id,state.owner.get(id));d.map.set(id,state.owner.get(id));}
-  const edges=[],seen=new Set();for(const e of d.edges){const sh=hidden.has(e.source),th=hidden.has(e.target);if(sh&&th)continue;
-   if(th)continue;let out=e;if(sh){const root=state.owners.get(e.source),source=root?.node||d.hiddenOwner.get(e.source);if(!shown.has(source)||source===e.target)continue;const rowPort=root?.row&&C.ports(byId.get(source)).find(p=>p.rowId===root.row&&p.side==='right');out={...e,source,sourcePort:rowPort?.id||'right',proxy:true};delete out.bus;delete out.manualRoute;delete out.waypoints;}
-   if(!shown.has(out.source)||!shown.has(out.target))continue;const key=out.proxy?[out.source,out.sourcePort,out.target,out.targetPort,out.arrow,out.arrowStart].join('|'):out.id;if(seen.has(key))continue;seen.add(key);edges.push(out);
+  const edges=[],seen=new Map();for(const e of d.edges){const sh=hidden.has(e.source),th=hidden.has(e.target);if(sh&&th)continue;
+   let out=e;if(sh||th){const source=sh?(state.owners.get(e.source)?.node||d.hiddenOwner.get(e.source)):e.source,target=th?(state.owners.get(e.target)?.node||d.hiddenOwner.get(e.target)):e.target;if(source===target)continue;out={...e,source,target,sourcePort:sh?C.rowProxyPort(pg,state,e.source,source,'right'):e.sourcePort,targetPort:th?C.rowProxyPort(pg,state,e.target,target,'left'):e.targetPort,proxy:true,count:e.count||1,originalIds:e.originalIds||[e.id]};delete out.bus;delete out.manualRoute;delete out.waypoints;}
+   if(!shown.has(out.source)||!shown.has(out.target))continue;const key=out.proxy?C.proxyKey(out.source,out.target,out.sourcePort,out.targetPort,out):out.id;if(seen.has(key)){const prior=seen.get(key);prior.count=(prior.count||1)+(out.count||1);prior.originalIds=[...(prior.originalIds||[prior.id]),...(out.originalIds||[out.id])];continue;}seen.set(key,out);edges.push(out);
   }
   d.edges=edges;d.hidden=hidden;d.rowCollapseState=state;return d;
  }
@@ -1178,10 +1179,10 @@ Core.deleteSelection=function(pg,selection){
 })(Core);
 /* A duplicated subgraph owns its combs and symmetry constraints. A partial
    comb with one copied connection becomes an independent connection. */
-Core.duplicateSelection=function(pg,selection){
+Core.duplicateSelection=function(pg,selection,view=null){
  const out=Core.clone(pg),wanted=new Set(selection),copies=pg.nodes.filter(n=>wanted.has(n.id)).map(Core.clone),ids=new Map(copies.map(n=>[n.id,Core.uid('node')])),edgeIds=new Map(),busIds=new Map(),byId=new Map(pg.nodes.map(n=>[n.id,n]));
- const effective=(n,seen=new Set())=>{if(!n||seen.has(n.id))return {x:0,y:0};seen.add(n.id);const host=byId.get(n.anchorId);if(host){const p=effective(host,seen);return {x:p.x+(n.anchorX||0),y:p.y+(n.anchorY||0)};}return {x:n.x+(n.offsetX||0),y:n.y+(n.offsetY||0)};};
- for(const cp of copies){const old=cp.id;cp.id=ids.get(old);if(ids.has(cp.anchorId))cp.anchorId=ids.get(cp.anchorId);else{if(cp.anchorId){const visible=effective(byId.get(old));cp.x=visible.x;cp.y=visible.y;cp.offsetX=cp.offsetY=0;}cp.anchorId=null;}cp.offsetX=(cp.offsetX||0)+38;cp.offsetY=(cp.offsetY||0)+38;out.nodes.push(cp);out.groups?.forEach(g=>{if(g.members.includes(old))g.members.push(cp.id);});}
+ const shown=new Map((view||Core.display(pg,new Set(),false)).nodes.map(n=>[n.id,n])),fallback=Core.anchorPositions(pg),position=id=>shown.get(id)||fallback.get(id);
+ for(const cp of copies){const old=cp.id,visible=position(old);cp.id=ids.get(old);if(ids.has(cp.anchorId)){const host=position(cp.anchorId);cp.anchorX=visible.x-host.x;cp.anchorY=visible.y-host.y;cp.anchorId=ids.get(cp.anchorId);}else cp.anchorId=null;cp.x=visible.x+38;cp.y=visible.y+38;cp.offsetX=cp.offsetY=0;out.nodes.push(cp);out.groups?.forEach(g=>{if(g.members.includes(old))g.members.push(cp.id);});}
  const edges=pg.edges.filter(e=>ids.has(e.source)&&ids.has(e.target)).map(e=>{const id=Core.uid('edge');edgeIds.set(e.id,id);return {...Core.clone(e),id,source:ids.get(e.source),target:ids.get(e.target)};});
  for(const bus of pg.buses||[]){const members=edges.filter(e=>e.bus===bus.id);if(members.length<2)continue;const copy=Core.clone(bus);copy.id=Core.uid('bus');if(ids.has(bus.hub))copy.hub=ids.get(bus.hub);else{delete copy.hub;copy.mode='free';}if(copy.mode==='free'&&Number.isFinite(copy.axis))copy.axis+=38;busIds.set(bus.id,copy.id);(out.buses||=[]).push(copy);}
  for(const e of edges){if(busIds.has(e.bus))e.bus=busIds.get(e.bus);else delete e.bus;}out.edges.push(...edges);
@@ -1647,12 +1648,16 @@ Core.duplicateSelection=function(pg,selection){
  function busEditAllowed(d,id,axis,beforeIssues){const after={...d,buses:d.buses.map(b=>b.id===id?{...b,axis}:b)},before=beforeIssues||new Set(busGeometryConflicts(d,id));return !busGeometryConflicts(after,id).some(key=>!before.has(key));}
  function normalizeV6(p){prev.normalizeV6(p);for(const pg of p.pages){pg.symmetrySets=(pg.symmetrySets||[]).filter(set=>{const es=pg.edges.filter(e=>set.edges.includes(e.id)),b=es.length&&es.every(e=>e.bus&&e.bus===es[0].bus)&&pg.buses.find(b=>b.id===es[0].bus);if(b&&pg.edges.filter(e=>e.bus===b.id).length===es.length){b.symmetry=b.autoAlign=set.enabled!==false;b.alignGap=set.gap||b.alignGap;b.symmetryAxis=set.axis;b.allowCrossings=set.allowCrossings===true;return false;}return true;});}return p;}
  function convertNode(pg,id,type){if(!['block','decision','comment'].includes(type))throw Error('Выберите блок, условие или комментарий');const out=C.clone(pg),n=out.nodes.find(n=>n.id===id);if(!n||!['block','decision','comment','note'].includes(n.type)||n.table)throw Error('Таблица и изображение сохраняют свой тип');if(n.editLocked)throw Error('Блок защищён от правки');n.type=type;return out;}
- function releaseSymmetry(pg,id,kind='set'){const out=C.clone(pg),d=display(pg,new Set(),false,new Set(),{autoSpace:false}),groups=d.symmetryGroups.filter(g=>kind==='bus'?g.bus===id:kind==='condition'?g.id==='condition:'+id:g.id===id),heads=[...new Set(groups.flatMap(g=>g.heads))],ids=new Set(branches(pg,heads,new Set(groups.map(g=>g.parent).filter(Boolean))).flatMap(b=>[...b.ids])),shown=new Map(d.nodes.map(n=>[n.id,n]));
+ function releaseSymmetry(pg,id,kind='set'){const selected=new Set(Array.isArray(id)?id:[id]),out=C.clone(pg),d=display(pg,new Set(),false,new Set(),{autoSpace:false}),groups=d.symmetryGroups.filter(g=>kind==='bus'?selected.has(g.bus):kind==='condition'?selected.has(g.id.replace(/^condition:/,'')):selected.has(g.id)),heads=[...new Set(groups.flatMap(g=>g.heads))],ids=new Set(branches(pg,heads,new Set(groups.map(g=>g.parent).filter(Boolean))).flatMap(b=>[...b.ids])),shown=new Map(d.nodes.map(n=>[n.id,n]));
   for(const n of out.nodes)if(ids.has(n.id)&&!n.locked&&!n.anchorId){const v=shown.get(n.id);if(v){n.x=v.x;n.y=v.y;n.offsetX=n.offsetY=0;}}
-  if(kind==='bus'){const b=out.buses.find(b=>b.id===id);b.symmetry=b.autoAlign=false;out.symmetrySets=(out.symmetrySets||[]).filter(s=>!s.edges.every(eid=>out.edges.find(e=>e.id===eid)?.bus===id));}else if(kind==='condition')out.nodes.find(n=>n.id===id).branchSymmetry=false;else out.symmetrySets.find(s=>s.id===id).enabled=false;return out;
+  for(const key of selected)if(kind==='bus'){const b=out.buses.find(b=>b.id===key);if(!b)throw Error('Гребёнка не найдена');b.symmetry=b.autoAlign=false;out.symmetrySets=(out.symmetrySets||[]).filter(s=>!s.edges.every(eid=>out.edges.find(e=>e.id===eid)?.bus===key));}else if(kind==='condition')out.nodes.find(n=>n.id===key).branchSymmetry=false;else out.symmetrySets.find(s=>s.id===key).enabled=false;return out;
  }
- function bulkPatch(pg,selection,patch,category='all'){
-  const out=C.clone(pg),allowed={node:['title','fill','color','textColor','stroke','fontSize','bold','italic','align','w','h','autoSize','relativeLock','collapsible','collapseBoundary','locked','editLocked','branchSymmetry','branchGap','branchCrossings','type','tableAutoSize','tableWordWrap','tableBodyPosition'],edge:['label','color','stroke','width','labelColor','fontSize','arrow','arrowStart','dashed','style','parentRole','labelCentered','editLocked'],bus:['title','color','stroke','width','dashed','style','symmetry','alignGap','orientation','allowCrossings','moveTogether','editLocked'],drawing:['color','width','editLocked']};
+ function bulkPatch(pg,selection,patch,category='all',view=null){
+  let out=C.clone(pg);const allowed={node:['title','fill','color','textColor','stroke','fontSize','bold','italic','align','w','h','autoSize','relativeLock','collapsible','collapseBoundary','locked','editLocked','branchSymmetry','branchGap','branchCrossings','type','tableAutoSize','tableWordWrap','tableBodyPosition'],edge:['label','color','stroke','width','labelColor','fontSize','arrow','arrowStart','dashed','style','parentRole','labelCentered','editLocked'],bus:['title','color','stroke','width','dashed','style','symmetry','alignGap','orientation','allowCrossings','moveTogether','editLocked'],drawing:['color','width','editLocked']};
+  const selected=(kind,item)=>(selection[kind]||[]).includes(item.id)&&(category==='all'||category===kind||category===(kind==='node'?item.type:kind))&&!C.editProtected(pg,item);
+  if(Object.hasOwn(patch,'locked'))out=C.setNodeLocks(out,pg.nodes.filter(n=>selected('node',n)).map(n=>n.id),patch.locked,view);
+  if(patch.symmetry===false){const ids=pg.buses.filter(b=>selected('bus',b)).map(b=>b.id);if(ids.length)out=releaseSymmetry(out,ids,'bus');}
+  if(patch.branchSymmetry===false){const ids=pg.nodes.filter(n=>n.type==='decision'&&selected('node',n)).map(n=>n.id);if(ids.length)out=releaseSymmetry(out,ids,'condition');}
   for(const [list,kind] of [['nodes','node'],['edges','edge'],['buses','bus'],['drawings','drawing']])for(const item of out[list]||[]){if(!(selection[kind]||[]).includes(item.id)||(category!=='all'&&category!==kind&&category!==(kind==='node'?item.type:kind)))continue;if((item.editLocked&&!Object.hasOwn(patch,'editLocked'))||(kind==='edge'&&out.buses?.find(b=>b.id===item.bus)?.editLocked))continue;
    for(const [key,value] of Object.entries(patch)){if(!allowed[kind].includes(key))continue;if(kind==='node'&&item.locked&&['w','h','autoSize','tableAutoSize'].includes(key))continue;if(key==='tableBodyPosition'&&!['center','header'].includes(value))throw Error('Некорректное положение портов таблицы');if(key.startsWith('branch')&&item.type!=='decision'||key.startsWith('table')&&!item.table)continue;
     if(key==='title'){item.title=value;delete item.html;}else if(key==='color')item[kind==='drawing'?'color':'stroke']=value;else if(key==='textColor')item.color=value;
@@ -1692,11 +1697,13 @@ Core.preflightTableChange=function(pg,id,table){
  const rows=new Set(table.rowIds),ports=new Set((n.ports||[]).filter(p=>p.rowId&&!rows.has(p.rowId)).map(p=>p.id));
  const removed=pg.edges.filter(e=>e.source===id&&ports.has(e.sourcePort)||e.target===id&&ports.has(e.targetPort));
  if(removed.some(e=>e.editLocked||pg.buses?.find(b=>b.id===e.bus)?.editLocked))throw Error('Строка связана с защищённой связью или гребёнкой. Изменение таблицы отменено.');
- return {ports,removed};
+ const next=Core.clone(pg),target=next.nodes.find(n=>n.id===id),ids=new Set(removed.map(e=>e.id));
+ target.table=Core.clone(table);delete target.table._pendingMaterials;target.w=table.widths.reduce((a,b)=>a+b,0);target.ports=(target.ports||[]).filter(p=>!ports.has(p.id));Core.initTable(target);next.edges=next.edges.filter(e=>!ids.has(e.id));Core.cleanBuses(next,pg);
+ return {ports,removed,page:next};
 };
 
 // The editor and loader share these presentation limits.
-Core.presentationRanges={fontSize:[1,1000],width:[0,1000]};
+Core.presentationRanges={fontSize:[1,1000],width:[0,1000],w:[1,1e7],h:[1,1e7]};
 // Validate values before any legacy coercion or interpolation into HTML/SVG.
 Core.validatePresentation=function(project){
  const number=(obj,key,min,max,legacyString=false)=>{
@@ -1710,9 +1717,11 @@ Core.validatePresentation=function(project){
  for(const pg of project.pages||[]){
   for(const n of pg.nodes||[]){
    number(n,'fontSize',...Core.presentationRanges.fontSize,true);
-   if(n.table){
+   for(const key of ['w','h'])number(n,key,...Core.presentationRanges[key]);
+   if(n.table!==undefined&&n.table!==null){
+    if(typeof n.table!=='object'||Array.isArray(n.table)||!Array.isArray(n.table.cells||[]))throw Error('Некорректная таблица');
     if(n.table.wordWrap!==undefined&&!['words','hyphenate'].includes(n.table.wordWrap))throw Error('Некорректный перенос слов');
-    for(const row of n.table.cells||[])for(const cell of row)if(cell)number(cell,'fontSize',...Core.presentationRanges.fontSize);
+    for(const row of n.table.cells||[]){if(!Array.isArray(row))throw Error('Некорректная строка таблицы');for(const cell of row)if(cell!==null){if(typeof cell!=='object'||Array.isArray(cell))throw Error('Некорректная ячейка таблицы');number(cell,'fontSize',...Core.presentationRanges.fontSize);}}
    }
   }
   for(const item of [...pg.edges||[],...pg.buses||[],...pg.drawings||[]]){number(item,'width',...Core.presentationRanges.width);number(item,'fontSize',...Core.presentationRanges.fontSize);}
@@ -1731,5 +1740,19 @@ Core.assertProtectedMembership=function(base,out){
   if((protectedEdge||protectedBus)&&(!next||next.bus!==e.bus))throw Error('Изменение затрагивает членство защищённой связи в гребёнке');
  }
  for(const b of base.buses||[])if(b.editLocked&&nextBuses.get(b.id)?.editLocked!==false){const before=base.edges.filter(e=>e.bus===b.id).map(e=>e.id).sort(),after=out.edges.filter(e=>e.bus===b.id).map(e=>e.id).sort();if(JSON.stringify(before)!==JSON.stringify(after))throw Error('Гребёнка защищена от правки');}
+ return out;
+};
+
+Core.editProtected=function(pg,item){return !!item?.editLocked||!!(item?.bus&&pg.buses?.find(b=>b.id===item.bus)?.editLocked);};
+
+Core.rowProxyPort=function(pg,state,id,visible,side){const owner=state?.owners.get(id),node=owner?.row&&pg.nodes.find(n=>n.id===visible);return node&&Core.ports(node).find(p=>p.rowId===owner.row&&p.side===side)?.id||side;};
+Core.setNodeLocks=function(pg,ids,locked,view=null){
+ const wanted=new Set(ids),targets=pg.nodes.filter(n=>wanted.has(n.id)&&!Core.editProtected(pg,n));
+ if(!targets.some(n=>!!n.locked!==!!locked))return Core.clone(pg);
+ const d=locked?(view||Core.display(pg,new Set(),false)):null,out=Core.clone(pg),shown=new Map(d?.nodes.map(n=>[n.id,n])||[]),before=Core.anchorPositions(pg),desired=new Map(targets.filter(n=>locked&&!n.locked).map(n=>[n.id,shown.get(n.id)||before.get(n.id)]));
+ for(const n of out.nodes)if(!n.anchorId&&desired.has(n.id)){const v=desired.get(n.id);n.x=v.x;n.y=v.y;n.offsetX=n.offsetY=0;}
+ if(locked)Core.preserveLockedAnchors(pg,out);
+ const anchors=Core.anchorPositions({...out,nodes:out.nodes.map(n=>desired.has(n.id)?{...n,x:desired.get(n.id).x,y:desired.get(n.id).y,anchorId:null,offsetX:0,offsetY:0}:n)});
+ for(const n of out.nodes)if(targets.some(t=>t.id===n.id)){const v=desired.get(n.id);if(v&&n.anchorId){const host=anchors.get(n.anchorId);n.x=v.x;n.y=v.y;n.offsetX=n.offsetY=0;if(host){n.anchorX=v.x-host.x;n.anchorY=v.y-host.y;}}n.locked=!!locked;}
  return out;
 };

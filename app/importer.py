@@ -81,7 +81,9 @@ def color(s,default):
 
 def import_drawio(raw: bytes, title='Сравнительная оценка вывода чертежей'):
     budget=ImportBudget()
-    def label_text(value):return text(value,budget.tick)
+    def label_text(record):
+        budget.tick()
+        return text(record['label'],budget.tick) if record['s'].get('html')=='1' else record['label']
     root=budget.parse(raw)
     diagrams=list(root.findall('diagram')) if root.tag=='mxfile' else [root]
     if not diagrams or len(diagrams)>MAX_PAGES:raise ValueError('Нужно от 1 до 128 страниц')
@@ -91,7 +93,7 @@ def import_drawio(raw: bytes, title='Сравнительная оценка в�
         mid='m-'+uuid.uuid5(uuid.NAMESPACE_URL,link).hex[:16]
         if mid not in registry:
             kind='page' if link.startswith('data:page/id,') else 'link'
-            registry[mid]={'id':mid,'title':label_text(label)[:85] or link,'kind':kind,'url':link,'version':1,'status':'Не проверено'}
+            registry[mid]={'id':mid,'title':label[:85] or link,'kind':kind,'url':link,'version':1,'status':'Не проверено'}
         return mid
     for di,d in enumerate(diagrams):
         budget.tick()
@@ -123,7 +125,7 @@ def import_drawio(raw: bytes, title='Сравнительная оценка в�
             a['points']=[]
             if geo is not None:
                 for p in geo.findall('./Array/mxPoint'): a['points'].append({'x':num(p.get('x')),'y':num(p.get('y'))})
-                for key in ('sourcePoint','targetPoint'):
+                for key in ('sourcePoint','targetPoint','offset'):
                     pt=geo.find(f"mxPoint[@as='{key}']")
                     if pt is not None:a[key]={'x':num(pt.get('x')),'y':num(pt.get('y'))}
             records[ident]=a; order.append(ident);children[a.get('parent')].append(ident)
@@ -136,7 +138,11 @@ def import_drawio(raw: bytes, title='Сравнительная оценка в�
             if len(seen)>=MAX_DEPTH:raise ValueError('Слишком глубокая вложенность блоков')
             seen.add(ident); a=records[ident];g=a['g']; p=a.get('parent')
             px,py=pos(p,seen) if p in records else (0,0)
-            positions[ident]=(px+num(g.get('x')),py+num(g.get('y')))
+            x,y=num(g.get('x')),num(g.get('y'))
+            if a.get('vertex')=='1' and g.get('relative')=='1' and p in records:
+                parent=records[p]['g'];offset=a.get('offset',{})
+                x=x*num(parent.get('width'))+num(offset.get('x'));y=y*num(parent.get('height'))+num(offset.get('y'))
+            positions[ident]=(px+x,py+y)
             return positions[ident]
         table_ids=set()
         for ident,a in records.items():
@@ -169,9 +175,9 @@ def import_drawio(raw: bytes, title='Сравнительная оценка в�
             x,y=pos(ident);g=a['g'];w=max(60,num(g.get('width'),180));h=max(28,num(g.get('height'),70))
             kind='table' if composite(a) else 'decision' if 'rhombus' in s else 'ellipse' if 'ellipse' in s else 'note' if s.get('shape')=='document' else 'text' if 'text' in s else 'block'
             mids=[]
-            m=material(a.get('link'),a['label'])
+            m=material(a.get('link'),label_text(a))
             if m:mids.append(m)
-            n={'id':ident,'title':label_text(a['label']),'html':a['label'],'type':kind,'x':x,'y':y,'w':w,'h':h,
+            n={'id':ident,'title':label_text(a),'html':a['label'] if a['s'].get('html')=='1' else '','type':kind,'x':x,'y':y,'w':w,'h':h,
                'fill':color(s.get('fillColor'),'#ffffff'),'stroke':color(s.get('strokeColor'),'#9aa8bf'),
                'fontSize':num(s.get('fontSize'),13),'materials':mids,'icons':[], 'sourceId':ident,'ports':[],
                'original':{'x':x,'y':y,'w':w,'h':h,'style':a.get('style','')}}
@@ -183,12 +189,12 @@ def import_drawio(raw: bytes, title='Сравнительная оценка в�
                     if not cellids: continue
                     cells=[]
                     for cid in cellids:
-                        ca=records[cid];mid=material(ca.get('link'),ca['label'])
+                        ca=records[cid];mid=material(ca.get('link'),label_text(ca))
                         if mid and mid not in mids:mids.append(mid)
-                        cells.append({'text':label_text(ca['label']),'html':ca['label'],'rowspan':1,'colspan':1,
+                        cells.append({'text':label_text(ca),'html':ca['label'] if ca['s'].get('html')=='1' else '','rowspan':1,'colspan':1,
                             'fill':color(ca['s'].get('fillColor'),'#ffffff'),'material':mid,'sourceId':cid})
                     if not colWidths:colWidths=[num(records[cid]['g'].get('width'),140) for cid in cellids]
-                    rm=material(ra.get('link'),ra['label'])
+                    rm=material(ra.get('link'),label_text(ra))
                     if rm and rm not in mids:mids.append(rm)
                     rows.append(cells)
                 n['table']={'cells':rows or [[{'text':'','rowspan':1,'colspan':1}]],'widths':colWidths or [180]}
@@ -223,10 +229,12 @@ def import_drawio(raw: bytes, title='Сравнительная оценка в�
             dst,tp=endpoint(a.get('target'),'entryX','entryY','left',a)
             if not src or not dst:
                 if 'sourcePoint' in a and 'targetPoint' in a:
-                    drawings.append({'id':ident,'type':'line','points':[a['sourcePoint'],*a['points'],a['targetPoint']], 'color':color(a['s'].get('strokeColor'),'#6c8ebf'),'width':num(a['s'].get('strokeWidth'),2),'anchor':None})
+                    px,py=pos(a['parent']) if a.get('parent') in records else (0,0)
+                    points=[{'x':p['x']+px,'y':p['y']+py} for p in [a['sourcePoint'],*a['points'],a['targetPoint']]]
+                    drawings.append({'id':ident,'type':'line','points':points, 'color':color(a['s'].get('strokeColor'),'#6c8ebf'),'width':num(a['s'].get('strokeWidth'),2),'anchor':None})
                 else: skipped.append(ident)
                 continue
-            label=label_text(a['label']) or ' / '.join(label_text(records[c]['label']) for c in children[ident] if records[c]['label'])
+            label=label_text(a) or ' / '.join(label_text(records[c]) for c in children[ident] if records[c]['label'])
             edges.append({'id':ident,'source':src,'target':dst,'sourcePort':sp,'targetPort':tp,'label':label,'arrow':a['s'].get('endArrow')!='none','arrowStart':a['s'].get('startArrow','none')!='none','dashed':a['s'].get('dashed')=='1','sourceOriginal':a.get('source'),'targetOriginal':a.get('target')})
         # Grouping is presentation metadata. It never rewrites semantic edges.
         candidates=[n for n in nodes if re.match(r'^(АР|ВК|ОВ|КР|ТХВ)(\s|$)',n['title']) and len(n['title'])<12]

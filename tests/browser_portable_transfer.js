@@ -10,6 +10,8 @@ const root = path.resolve(__dirname, '..');
 const version = fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim();
 const original = process.env.STUDIO_PORTABLE_EXE || path.join(root, 'desktop/dist', `Pipeline-Studio-${version}-x64.exe`);
 const diagnose = process.argv.includes('--diagnose');
+const startupTimeout = Number(process.env.STUDIO_PORTABLE_STARTUP_TIMEOUT || 45000);
+assert(Number.isFinite(startupTimeout) && startupTimeout > 0, 'Invalid portable startup timeout');
 fs.mkdirSync(path.join(root, 'qa'), { recursive: true });
 const fixture = fs.mkdtempSync(path.join(root, 'qa/portable-transfer-'));
 // Exercise the launcher's normal Windows runtime environment independently
@@ -83,7 +85,7 @@ async function runCase(label, lowerDrive = false) {
   let browser, main;
   const result = { label, lowerDrive };
   try {
-    const deadline = Date.now() + 45000;
+    const deadline = Date.now() + startupTimeout;
     while (!fs.existsSync(report)) {
       if (launchError) throw launchError;
       if (child.exitCode !== null) throw new Error('Portable exited before startup: ' + log);

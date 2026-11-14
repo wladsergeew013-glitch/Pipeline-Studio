@@ -11,6 +11,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Install LibreOffice for real Office-to-PDF coverage
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-impress
       - run: python tools/checksums.py
       - run: python tests/test_docker.py
       - run: npm install --no-save --package-lock=false playwright
@@ -40,6 +42,8 @@ jobs:
       - run: node tests/browser_review_desktop.js
       - run: node tests/browser_desktop.js
       - run: node tests/browser_portable_transfer.js
+        env:
+          STUDIO_PORTABLE_STARTUP_TIMEOUT: '120000'
       - uses: actions/upload-artifact@v4
         with:
           name: Pipeline-Studio-Windows-x64

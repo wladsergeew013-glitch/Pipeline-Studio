@@ -290,4 +290,32 @@ class ReviewServerTests(unittest.TestCase):
             code,_,headers=self.editor.call(static);self.assertEqual(code,200)
             self.assertNotIn('Content-Disposition',headers)
 
+    def test_22_nullable_table_survives_publish_reader_and_media(self):
+        m=self.upload(b'READER MATERIAL');p=self.project();n=p['pages'][0]['nodes'][0];n['table']=None;n['materials']=[m['id']]
+        self.assertEqual(self.editor.call('/api/project','PUT',p)[0],200)
+        pub=self.editor.call('/api/publish','POST')[1]['id'];reader=Client(self.base);reader.call('/api/login','POST',{'password':'review-reader'})
+        self.assertEqual(reader.call('/api/published/'+pub)[0],200);self.assertEqual(reader.call('/media/'+m['asset']+'?view='+pub)[0],200)
+        for bad in [False,0,'wrong',[{}]]:
+            p=self.project();p['pages'][0]['nodes'][0]['table']=bad
+            self.assertEqual(self.editor.call('/api/project','PUT',p)[0],400)
+
+    def test_23_drawio_plain_labels_are_not_interpreted_as_html(self):
+        from xml.sax.saxutils import quoteattr
+        for flag in ['0','1']:
+            value='Use <token> and <b>literal</b>'
+            xml=('<mxGraphModel><root><mxCell id="x" value='+quoteattr(value)+' vertex="1" style="html='+flag+'"><mxGeometry x="10" y="20" width="300" height="60"/></mxCell></root></mxGraphModel>').encode()
+            code,p,_=self.editor.call('/api/import','POST',xml);self.assertEqual(code,200)
+            n=p['pages'][0]['nodes'][0]
+            self.assertEqual(n['title'],value if flag=='0' else 'Use  and literal')
+            self.assertEqual(bool(n.get('html')),flag=='1')
+
+    def test_24_drawio_free_line_receives_all_parent_offsets(self):
+        for grouped in [False,True]:
+            group='<mxCell id="g" style="group" vertex="1"><mxGeometry x="300" y="400" width="500" height="500"/></mxCell>' if grouped else ''
+            parent='parent="g"' if grouped else ''
+            xml=('<mxGraphModel><root>'+group+'<mxCell id="line" edge="1" '+parent+'><mxGeometry x="900" y="800" relative="1"><mxPoint x="10" y="20" as="sourcePoint"/><Array as="points"><mxPoint x="60" y="30"/></Array><mxPoint x="110" y="20" as="targetPoint"/></mxGeometry></mxCell></root></mxGraphModel>').encode()
+            code,p,_=self.editor.call('/api/import','POST',xml);self.assertEqual(code,200)
+            offset=(300,400) if grouped else (0,0)
+            self.assertEqual(p['pages'][0]['drawings'][0]['points'],[{'x':x+offset[0],'y':y+offset[1]} for x,y in [(10,20),(60,30),(110,20)]])
+
 if __name__=='__main__':unittest.main(verbosity=2)

@@ -97,9 +97,16 @@ class ServerTests(unittest.TestCase):
     def test_10_preview_conversion_if_libreoffice(self):
         import shutil
         if not (shutil.which('libreoffice') or shutil.which('soffice')):self.skipTest('LibreOffice not installed')
-        m=self.upload('test.rtf',br'{\rtf1\ansi Pipeline Studio preview test.}')
-        status,converted,_=self.editor.call('/api/preview/'+m['id'],'POST');self.assertEqual(status,200,converted)
-        status,data,headers=self.editor.call('/media/'+converted['previewAsset']);self.assertEqual(status,200);self.assertTrue(data.startswith(b'%PDF'));self.assertEqual(headers['Content-Type'],'application/pdf')
+        sources=[('test.rtf',br'{\rtf1\ansi Pipeline Studio preview test.}')]
+        for suffix in ('.docx','.pptx'):
+            fixture=next((BASE/'documents').glob('*'+suffix))
+            sources.append(('test'+suffix,fixture.read_bytes()))
+        for name,source in sources:
+            with self.subTest(format=Path(name).suffix):
+                m=self.upload(name,source)
+                status,converted,_=self.editor.call('/api/preview/'+m['id'],'POST');self.assertEqual(status,200,converted)
+                status,data,headers=self.editor.call('/media/'+converted['previewAsset']);self.assertEqual(status,200);self.assertTrue(data.startswith(b'%PDF-'));self.assertGreater(len(data),100);self.assertEqual(headers['Content-Type'],'application/pdf')
+                self.assertEqual(self.editor.call('/media/'+m['asset'])[1],source)
     def test_11_backup_contains_source_data(self):
         import io,zipfile
         s,data,_=self.editor.call('/api/backup');self.assertEqual(s,200)
