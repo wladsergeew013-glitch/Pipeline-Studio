@@ -11,9 +11,11 @@ function samplePDF(){
 (async()=>{
  const base=fs.mkdtempSync(path.join(B,'qa/review-desktop-')),author=path.join(base,'author'),recipient=path.join(base,'recipient');fs.mkdirSync(path.join(author,'materials'),{recursive:true});fs.mkdirSync(path.join(author,'Reports'));fs.mkdirSync(path.join(recipient,'materials'),{recursive:true});
  const source=path.join(author,'materials/diagram.png'),target=path.join(author,'Process.html'),saveAs=path.join(author,'Reports/Process.html');fs.writeFileSync(source,Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF1sAAAAASUVORK5CYII=','base64'));
+ const startup=path.join(base,'Startup.json');fs.writeFileSync(startup,JSON.stringify({...fixture(),title:'STARTUP DOCUMENT'}));
  const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
- const app=await pw._electron.launch({executablePath:exe,args:['--studio-hidden','--studio-no-register','--studio-test-profile',path.join(base,'profile')],env,timeout:60000}),p=await app.firstWindow();p.on('pageerror',e=>errors.push(e.message));p.setDefaultTimeout(15000);
+ const app=await pw._electron.launch({executablePath:exe,args:['--studio-hidden','--studio-no-register','--studio-test-profile',path.join(base,'profile'),startup],env,timeout:60000}),p=await app.firstWindow();p.on('pageerror',e=>errors.push(e.message));p.setDefaultTimeout(15000);
  try{
+  await p.waitForFunction(()=>Studio.state.project?.title==='STARTUP DOCUMENT'&&!Studio.state.home);check('N13 packaged fresh startup opens its command-line document after editor initialization',await p.evaluate(()=>Studio.state.project.title==='STARTUP DOCUMENT'));await p.evaluate(()=>Studio.closeProject());
   await p.waitForSelector('#home-new');check('Packaged EXE and editor both report '+version,(await app.evaluate(({app})=>app.getVersion()))===version&&(await p.locator('.version-tag').innerText())===version);
   await app.evaluate(({dialog},{source,target})=>{global.reviewPick=source;global.reviewTarget=target;dialog.showOpenDialog=async()=>({canceled:false,filePaths:[global.reviewPick]});dialog.showSaveDialog=async()=>({canceled:false,filePath:global.reviewTarget});},{source,target});
   await p.evaluate(async project=>{await Studio.activateDocument(project);const info=await STUDIO_DESKTOP.call('pick',{});Studio.change(()=>Studio.state.project.materials.push({...info,id:'nested',title:'Nested image',kind:'image',version:1}));await Studio.saveDocument()},fixture());

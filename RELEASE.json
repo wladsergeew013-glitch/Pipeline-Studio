@@ -22,7 +22,7 @@
     "localFullJsChecks": 1063,
     "pythonPassed": 74,
     "pythonSkipped": 1,
-    "packagedReviewChecks": 22,
+    "packagedReviewChecks": 23,
     "packagedDesktopChecks": 23,
     "dockerChecks": 2,
     "portableTransferChecks": 3

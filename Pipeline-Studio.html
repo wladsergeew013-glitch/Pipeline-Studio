@@ -2558,6 +2558,7 @@ function nativeSource(m,preview=false){return {nativePath:preview?m.previewNativ
 async function nativeSourceURL(m,preview=false){const info=await nativeCall('stat',nativeSource(m,preview));if(info.state!=='ok')throw Error(info.detail+': '+info.nativePath);if(desktopAvailable())return info.fileURL;return '/native/content?path='+encodeURIComponent(info.nativePath)+'&token='+encodeURIComponent(window.STUDIO_NATIVE.token)+'&v='+info.lastModified;}
 function originalFileHelp(m){const parent=registryReturn();modal('Открыть исходный файл',`<p><strong>${esc(m.title||m.filename)}</strong></p><p>Чтобы открыть оригинал в Word, Excel или PowerPoint и показать его в Проводнике, запустите <strong>Pipeline Studio.exe</strong>. Затем откройте этот HTML в приложении и выберите оригинал источника.</p><p class="muted">В обычном HTML браузер скрывает полный путь Windows. Просмотр PDF, видео и картинок остаётся доступен.</p>`,'',true);currentModal.onDismiss=()=>restoreRegistry(parent);}
 let DOC={key:null,name:'',handle:null,root:null,files:new Map(),sessionFiles:new Map(),urls:new Map(),direct:false,exportedAt:0};
+let finishInitialization;const editorReady=new Promise(resolve=>finishInitialization=resolve);
 let recentDocuments=[];
 let documentOpenVersion=0;
 function reserveDocumentOpen(){return ++documentOpenVersion;}
@@ -3290,6 +3291,7 @@ async function init(){
   if(S.pub){S.server=true;const s=await request('/api/session');S.role=s.role;if(!s.role)return login();return loadServer();}
   await home();
  }catch(e){$('#app').innerHTML=`<div class="login"><h1>Не удалось открыть документ</h1><p>${esc(e.message)}</p><button id="boot-home">Вернуться в Studio</button></div>`;$('#boot-home').onclick=()=>home().catch(console.error);console.error(e);}
+ finally{finishInitialization();}
 }
 /* Print and framing use the same shared-bus geometry as the interactive scene. */
 function sceneBounds(p,d){
@@ -4212,6 +4214,6 @@ document.addEventListener('click',e=>{const open=e.target.closest('[data-open-co
 document.addEventListener('selectstart',e=>{const el=e.target.nodeType===1?e.target:e.target.parentElement;if(!el?.closest('input,textarea,[contenteditable="true"]'))e.preventDefault();});
 document.addEventListener('dragstart',e=>{if(e.target.closest?.('#app'))e.preventDefault();});
 
-window.Studio={reserveDocumentOpen,activeCell,applyTheme,selectedConnectionIds,selectionV075,deleteSelectionV075,selectFolder,onChange,nodeStateIcons,requestMaterialRemoval,projectMenu,closeProject,collapsedRows,toggleRow,setRowControl,jumpToNode,editMaterial,openRecentDocument,locationText,deleteSegment,measureNode,materialChip,fileIcon,fileType,materialLocation,materialExternal,jumpToCell,measureCell,setTool,renderInspector,renderEdges,uiIcon,pagesDialog,searchDialog,checkHTTP,checkMaterial,checkAllMaterials,materialCheckDialog,renderGuides,highlightCommonPorts,state:S,Core:C,init,home,render,fit,focusNode,action,save,saveDocument,makeNode,addNode,tableEditor,registry,preparePrint,exportHTML,exportJSON,portableProject,openMaterial,showNodeMaterials,change,uploadFile,assetURL,normalize,cleanHTML,groupsDialog,groupEditor,arrangeSelection,addRoutePoint,resetRoute,nudge,parseDocumentText,openDocumentFile,activateDocument,buildDocumentHTML,bindFolder,resolveMaterial,toggleNode,connectPorts,choosePort,undo,redo,combineSelected,tableHTML,sceneBounds,get document(){return DOC;}};
+window.Studio={ready:editorReady,reserveDocumentOpen,activeCell,applyTheme,selectedConnectionIds,selectionV075,deleteSelectionV075,selectFolder,onChange,nodeStateIcons,requestMaterialRemoval,projectMenu,closeProject,collapsedRows,toggleRow,setRowControl,jumpToNode,editMaterial,openRecentDocument,locationText,deleteSegment,measureNode,materialChip,fileIcon,fileType,materialLocation,materialExternal,jumpToCell,measureCell,setTool,renderInspector,renderEdges,uiIcon,pagesDialog,searchDialog,checkHTTP,checkMaterial,checkAllMaterials,materialCheckDialog,renderGuides,highlightCommonPorts,state:S,Core:C,init,home,render,fit,focusNode,action,save,saveDocument,makeNode,addNode,tableEditor,registry,preparePrint,exportHTML,exportJSON,portableProject,openMaterial,showNodeMaterials,change,uploadFile,assetURL,normalize,cleanHTML,groupsDialog,groupEditor,arrangeSelection,addRoutePoint,resetRoute,nudge,parseDocumentText,openDocumentFile,activateDocument,buildDocumentHTML,bindFolder,resolveMaterial,toggleNode,connectPorts,choosePort,undo,redo,combineSelected,tableHTML,sceneBounds,get document(){return DOC;}};
 init();
 </script></body></html>
