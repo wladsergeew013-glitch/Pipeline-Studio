@@ -56,6 +56,11 @@ const fixture=()=>({format:'pipeline-studio',schemaVersion:6,id:'reliability',ti
   check('R08 an actual browser file handle wins over the connected same-named file',await p.evaluate(async()=>await (await fetch(await Studio.resolveMaterial(Studio.state.project.materials[0]))).text()==='EXTERNAL'));
   await p.evaluate(async()=>{await Studio.closeProject();await Studio.openRecentDocument('explicit-source')});
   check('R08 the chosen browser handle survives IndexedDB close and reopen',await p.evaluate(async()=>await (await fetch(await Studio.resolveMaterial(Studio.state.project.materials[0]))).text()==='EXTERNAL'));
+  const previewOnly=fixture();previewOnly.materials=[{id:'preview',title:'Native Word',kind:'document',nativePath:'C:\\Original.docx',previewNativePath:'D:\\Preview.pdf',version:1}];
+  await p.evaluate(project=>Studio.activateDocument(project,{name:'Preview.html'}),previewOnly);
+  await p.evaluate(async()=>{window.previewURL='data:application/pdf;base64,'+btoa('%PDF-1.4\nsynthetic preview');window.STUDIO_DESKTOP={call:async(route,data)=>({state:'ok',nativePath:data.nativePath,fileURL:data.nativePath==='D:\\Preview.pdf'?window.previewURL:'data:application/octet-stream,original'})};await Studio.openMaterial('preview')});
+  check('R17 the actual Word viewer iframe uses a preview with only previewNativePath',await p.evaluate(()=>document.querySelector('.modal iframe')?.getAttribute('src')===window.previewURL));
+  await p.evaluate(()=>{delete window.STUDIO_DESKTOP});
   const native=fixture();native.materials=[{id:'native',title:'External',kind:'document',nativePath:'D:\\External\\source.docx',version:1}];
   await p.evaluate(project=>{delete window.STUDIO_DESKTOP;return Studio.activateDocument(project,{name:'Native.html'})},native);
   await p.evaluate(()=>Studio.editMaterial('native'));

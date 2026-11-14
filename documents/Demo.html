@@ -3074,7 +3074,7 @@ async function v5OpenMaterial(id){
   modal('Переход на страницу',`<p class="material-long-title">${esc(m.title)}</p><div class="notice">Это внутренняя ссылка, а не файл. ${index<0?'Связанная страница отсутствует.':same?'Вы уже на этой странице. Камера не перемещалась.':'Страница: '+esc(S.project.pages[index].title)}</div>`,index>=0&&!same?'<button id="go-material-page" class="primary">Перейти на страницу</button>':'',true);
   if($('#go-material-page'))$('#go-material-page').onclick=()=>{closeModal();S.pageIndex=index;S.selected.clear();render();fit();};return;
  }
- let url='',preview='',error='';try{url=await resolveMaterial(m);if(m.previewPath||m.previewURL||m.previewAsset)preview=await resolveMaterial(m,true);if(m.previewMaterial)preview=await resolveMaterial(mat(m.previewMaterial));}catch(e){error=e.message;}
+ let url='',preview='',error='';try{url=await resolveMaterial(m);if(m.previewPath||m.previewNativePath||m.previewURL||m.previewAsset)preview=await resolveMaterial(m,true);if(m.previewMaterial)preview=await resolveMaterial(mat(m.previewMaterial));}catch(e){error=e.message;}
  const info=`<p class="material-long-title">${fileIcon(m)} <strong>${esc(m.filename||m.title)}</strong></p><p class="material-path muted">${esc(locationText(m))} · ${esc(typeName[m.kind]||m.kind)}</p>`;
  let content=info;
  if(error||!url&&!preview)content+=`<div class="notice warn">${esc(error||'Браузер ещё не имеет доступа к папке материалов. Укажите корневую папку, в которой лежит HTML документа.')}<div class="row wrap"><button id="viewer-bind-folder">Подключить папку</button>${S.readOnly?'':'<button id="viewer-edit-path">Исправить путь</button>'}</div></div>`;
