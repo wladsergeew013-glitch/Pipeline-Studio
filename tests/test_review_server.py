@@ -1,5 +1,6 @@
 """Review regressions through real HTTP handlers and isolated synthetic files."""
-import base64, concurrent.futures, copy, importlib.util, io, json, os, subprocess, sys, tempfile, threading, unittest, zipfile, zlib
+import base64, concurrent.futures, copy, importlib.util, io, json, os, shutil, subprocess, sys, tempfile, threading, unittest, zipfile, zlib
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 from test_server import Client
@@ -26,8 +27,8 @@ class ReviewServerTests(unittest.TestCase):
         with self.s.LOCK:
             self.s.write(self.s.DATA/'project.json',self.seed);self.s.write(self.s.DATA/'materials.json',[]);self.s.SESSIONS.clear()
         self.editor=Client(self.base);self.assertEqual(self.editor.call('/api/login','POST',{'password':'review-editor'})[0],200)
-    def upload(self,data=b'original',replace=None):
-        headers={'X-File-Name':'original.docx'}
+    def upload(self,data=b'original',replace=None,filename='original.docx'):
+        headers={'X-File-Name':filename}
         if replace:headers['X-Replace-Material']=replace
         code,m,_=self.editor.call('/api/upload','POST',data,headers);self.assertEqual(code,200,m);return m
     def project(self):return self.editor.call('/api/project')[1]
@@ -105,6 +106,83 @@ class ReviewServerTests(unittest.TestCase):
             replacement=self.upload(b'B',mat['id']);release.set();code,result,_=future.result(10)
         self.assertEqual(code,409,result);current=next(m for m in self.project()['materials'] if m['id']==mat['id']);self.assertEqual(current['asset'],replacement['asset']);self.assertNotIn('previewAsset',current)
         self.assertEqual(seen,[b'A']);self.assertFalse(any(p.name.endswith('-preview') for p in set(self.s.ASSETS.iterdir())-before))
+    def test_v22_03_failed_preview_commit_leaves_no_extra_pdf_in_assets_or_backup(self):
+        real_converter=bool(shutil.which('libreoffice') or shutil.which('soffice'))
+        mat=self.upload(br'{\rtf1\ansi Pipeline Studio preview rollback test.}',filename='preview.rtf')
+        route='/api/preview/'+mat['id']
+        which,convert=(nullcontext(),nullcontext()) if real_converter else self.convert()
+        with which,convert:
+            status,first,_=self.editor.call(route,'POST')
+            self.assertEqual(status,200,first)
+            original_pdf=self.editor.call('/media/'+first['previewAsset'])[1]
+            self.assertTrue(original_pdf.startswith(b'%PDF-'))
+            state=self.s.DATA/'state.json'
+            before=state.read_bytes()
+            files={path.name for path in self.s.ASSETS.iterdir()}
+            replace=self.s.os.replace
+
+            def fail_before_replace(src,dst):
+                if dst==state:
+                    raise OSError('synthetic state write failure')
+                return replace(src,dst)
+
+            with patch.object(self.s.os,'replace',side_effect=fail_before_replace):
+                self.assertEqual(self.editor.call(route,'POST')[0],500)
+            self.assertEqual(state.read_bytes(),before)
+            self.assertEqual({path.name for path in self.s.ASSETS.iterdir()},files)
+            status,backup,_=self.editor.call('/api/backup')
+            self.assertEqual(status,200)
+            with zipfile.ZipFile(io.BytesIO(backup)) as archive:
+                self.assertEqual({name for name in archive.namelist() if name.endswith('-preview')},
+                                 {'assets/'+name for name in files if name.endswith('-preview')})
+            self.assertEqual(self.editor.call('/media/'+first['previewAsset'])[1],original_pdf)
+            status,retry,_=self.editor.call(route,'POST')
+            self.assertEqual(status,200,retry)
+            self.assertNotEqual(retry['previewAsset'],first['previewAsset'])
+            self.assertTrue(self.editor.call('/media/'+retry['previewAsset'])[1].startswith(b'%PDF-'))
+            self.assertEqual((self.s.ASSETS/first['previewAsset']).read_bytes(),original_pdf)
+        if real_converter:print('PASS V22-03 real LibreOffice conversion before and after a rejected state write',flush=True)
+
+    def test_v22_03_late_preview_error_retains_the_committed_pdf(self):
+        mat=self.upload()
+        commit=self.s.commit_materials
+
+        def fail_after_commit(materials):
+            commit(materials)
+            raise OSError('synthetic failure after the write')
+
+        which,convert=self.convert()
+        with which,convert,patch.object(self.s,'commit_materials',side_effect=fail_after_commit):
+            self.assertEqual(self.editor.call('/api/preview/'+mat['id'],'POST')[0],500)
+        saved=next(m for m in self.project()['materials'] if m['id']==mat['id'])
+        self.assertEqual(self.editor.call('/media/'+saved['previewAsset'])[1],b'%PDF-original')
+        self.assertEqual(self.editor.call('/media/'+mat['asset'])[1],b'original')
+
+    def test_v22_03_unreadable_authoritative_state_keeps_the_new_pdf(self):
+        mat=self.upload()
+        state=self.s.DATA/'state.json'
+        before=state.read_bytes()
+        original_load=self.s.load
+        unreadable=False
+
+        def fail_when_reloaded(file,*args):
+            if file==state and unreadable:
+                raise OSError('synthetic unavailable authoritative state')
+            return original_load(file,*args)
+
+        def fail_commit(_):
+            nonlocal unreadable
+            unreadable=True
+            raise OSError('synthetic indeterminate commit')
+
+        files=set(self.s.ASSETS.iterdir())
+        which,convert=self.convert()
+        with which,convert,patch.object(self.s,'commit_materials',side_effect=fail_commit),patch.object(self.s,'load',side_effect=fail_when_reloaded):
+            self.assertEqual(self.editor.call('/api/preview/'+mat['id'],'POST')[0],500)
+        self.assertEqual(state.read_bytes(),before)
+        new=list(set(self.s.ASSETS.iterdir())-files)
+        self.assertEqual(len(new),1)
+        self.assertEqual(new[0].read_bytes(),b'%PDF-original')
     def test_08_importer_keeps_column_widths_with_sorted_text_cli_and_http(self):
         xml=b'<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="t" style="shape=table" vertex="1" parent="1"><mxGeometry width="400" height="90"/></mxCell><mxCell id="r" style="shape=tableRow" vertex="1" parent="t"><mxGeometry width="400" height="40"/></mxCell><mxCell id="right" value="Right" vertex="1" parent="r"><mxGeometry x="100" width="300" height="40"/></mxCell><mxCell id="left" value="Left" vertex="1" parent="r"><mxGeometry x="0" width="100" height="40"/></mxCell></root></mxGraphModel></diagram></mxfile>'
         source=Path(self.tmp.name)/'shuffled.drawio';result=Path(self.tmp.name)/'imported.json';source.write_bytes(xml)

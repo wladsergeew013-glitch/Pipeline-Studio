@@ -1,5 +1,5 @@
 'use strict';
-const {app,BrowserWindow,ipcMain,dialog,shell,Menu,protocol,net}=require('electron'),path=require('node:path'),fs=require('node:fs'),{pathToFileURL}=require('node:url'),{FileBridge,EXTENSIONS}=require('./file-bridge.cjs');
+const {app,BrowserWindow,ipcMain,dialog,shell,Menu,protocol}=require('electron'),path=require('node:path'),fs=require('node:fs'),{pathToFileURL}=require('node:url'),{Readable}=require('node:stream'),{FileBridge,EXTENSIONS}=require('./file-bridge.cjs');
 const {createEditorURLValidator,isEditorSender}=require('./editor-origin.cjs');
 protocol.registerSchemesAsPrivileged([{scheme:'studio-pdf',privileges:{standard:true,secure:true,supportFetchAPI:true,allowExtensions:true}}]);
 app.setName('Pipeline Studio');
@@ -18,8 +18,9 @@ if(!app.requestSingleInstanceLock()){app.quit()}else{
   // PDF material frames have their own origin and can never serve HTML or unsigned files.
   protocol.handle('studio-pdf',async request=>{
    if(!['GET','HEAD'].includes(request.method))return new Response('',{status:405});
+   let handle;
    try{
-    const info=await bridge.pdfSource(request.url);if(info.state!=='ok')throw Error('PDF недоступен');
+    const info=await bridge.pdfSource(request.url);handle=info.handle;
     const range=request.headers.get('Range'),match=range&&/^bytes=(\d*)-(\d*)$/.exec(range);let start=0,end=info.size-1;
     if(range){if(match&&(match[1]||match[2])){start=match[1]?Number(match[1]):Math.max(0,info.size-Number(match[2]));end=match[1]&&match[2]?Math.min(end,Number(match[2])):end;}else start=info.size;
      if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start>=info.size||end<start)return new Response(null,{status:416,headers:{'Content-Range':'bytes */'+info.size,'Cache-Control':'no-store'}});
@@ -27,10 +28,15 @@ if(!app.requestSingleInstanceLock()){app.quit()}else{
     const headers=new Headers({'Content-Type':'application/pdf','X-Content-Type-Options':'nosniff','Cache-Control':'no-store','Content-Security-Policy':'frame-ancestors file: studio-pdf:','Accept-Ranges':'bytes','Content-Length':String(end-start+1)});
     if(range)headers.set('Content-Range',`bytes ${start}-${end}/${info.size}`);
     if(request.method==='HEAD')return new Response(null,{status:range?206:200,headers});
-    const response=await net.fetch(info.fileURL,{headers:range?{Range:`bytes=${start}-${end}`}:{}});
-    return new Response(response.body,{status:range?206:response.status,headers});
+    // Use the same descriptor for validation, range metadata and the body.
+    const stream=handle.createReadStream({start,end});
+    const body=Readable.toWeb(stream,{strategy:{highWaterMark:stream.readableHighWaterMark,size:chunk=>chunk.byteLength}});
+    const response=new Response(body,{status:range?206:200,headers});
+    handle=null; // The stream closes the descriptor after EOF or cancellation.
+    return response;
    }
    catch{return new Response('PDF недоступен',{status:403,headers:{'Content-Type':'text/plain; charset=utf-8','Content-Security-Policy':"sandbox; default-src 'none'"}});}
+   finally{if(handle)await handle.close().catch(()=>{});}
   });
   win=new BrowserWindow({width:1440,height:940,minWidth:900,minHeight:600,title:'Pipeline Studio',show:!hidden,backgroundColor:'#f7f8fc',icon:path.join(__dirname,'icon.ico'),webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,plugins:true}});
   Menu.setApplicationMenu(null);

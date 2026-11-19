@@ -4,7 +4,7 @@
 'use strict';
 const C=Core,$=(q,r=document)=>r.querySelector(q),$$=(q,r=document)=>[...r.querySelectorAll(q)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const STATE={project:null,pageIndex:0,selected:new Set(),selectedEdge:null,selectedDrawing:null,collapsed:{},folded:new Set(),compact:true,readOnly:false,server:false,role:'editor',tool:'select',view:{x:20,y:20,z:.8},display:null,history:[],redo:[],saving:false,dirty:false,editVersion:0,search:'',drawColor:'#606bea',drawWidth:3,pub:null,drag:null};
+const STATE={project:null,pageIndex:0,selected:new Set(),selectedEdge:null,selectedDrawing:null,collapsed:{},folded:new Set(),compact:true,readOnly:false,server:false,role:'editor',tool:'select',view:{x:20,y:20,z:.8},display:null,branchFocus:null,history:[],redo:[],saving:false,dirty:false,editVersion:0,search:'',drawColor:'#606bea',drawWidth:3,pub:null,drag:null};
 const S=STATE;S.visibility={status:true,lock:true,relative:true,protection:true,icons:true};S.dialogSizes={};
 const volatileStore=new Map();
 let DB=null,saveTimer=null,toastTimer=null,lastFocus=null,liveAssets=new Map(),sessionViewers=[],currentModal=null;
@@ -118,7 +118,7 @@ function strokeHTML(s,print=false){const d=inkData(s);return d?`<${d.tag} ${d.at
 const sceneMarkup=new WeakMap(),nodeMarkup=new WeakMap();
 function setSceneMarkup(el,markup){if(sceneMarkup.get(el)===markup)return;el.innerHTML=markup;sceneMarkup.set(el,markup);}
 function v074RenderInk(){
- const list=page().drawings||[];setSceneMarkup($('#ink'),`<defs><marker id="ink-arrow" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="context-stroke"/></marker></defs>`+list.filter(s=>!s.legacy||(!S.compact&&collapsed().size===0)).map(s=>strokeHTML(s)).join('')+'<path id="draft-stroke" fill="none" stroke="#555ce9" stroke-width="3" stroke-linecap="round"/>');
+ const list=S.display?.drawings??page().drawings??[];setSceneMarkup($('#ink'),`<defs><marker id="ink-arrow" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="context-stroke"/></marker></defs>`+list.filter(s=>!s.legacy||(!S.compact&&collapsed().size===0)).map(s=>strokeHTML(s)).join('')+'<path id="draft-stroke" fill="none" stroke="#555ce9" stroke-width="3" stroke-linecap="round"/>');
 }
 function transform(){const v=S.view;$('#world').style.transform=`translate(${v.x}px,${v.y}px) scale(${v.z})`;$('#zoom-label').textContent=Math.round(v.z*100)+'%';
  const grid=$('#stage');if(S.editModes?.grid){const unit=Math.max(2,Number(S.editModes.gridSize)||20)*v.z,step=unit*Math.max(1,Math.ceil(8/unit));grid.style.backgroundSize=`${step}px ${step}px`;grid.style.backgroundPosition=`${v.x}px ${v.y}px`;}else{grid.style.backgroundSize='22px 22px';grid.style.backgroundPosition='0 0';}
@@ -220,7 +220,7 @@ function legacyOnChange(e){
  const n=selected(),id=e.target.id,v=e.target.value;
  if(id.startsWith('node-')&&n){change(()=>{if(id==='node-title'){n.title=v;n.html='';}if(id==='node-fill')n.fill=v;if(id==='node-stroke')n.stroke=v;if(id==='node-width')n.w=Math.max(40,Math.min(4000,Number(v)||200));if(id==='node-height')n.h=Math.max(25,Math.min(10000,Number(v)||80));if(id==='node-font')n.fontSize=Math.max(8,Math.min(160,Number(v)||14));if(id==='node-align')n.align=v;if(id==='node-group'){page().groups.forEach(g=>g.members=g.members.filter(id=>id!==n.id));if(v){const g=page().groups.find(g=>g.id===v);g.members.push(n.id);for(const gid of C.hierarchy(page()).ancestors(v))collapsed().delete(gid);}n.group=v||null;}});return;}
  if(id.startsWith('icon-')&&n?.icons.length){change(()=>{const ic=n.icons.at(-1);if(id==='icon-x')ic.x=Number(v)||0;if(id==='icon-y')ic.y=Number(v)||0;if(id==='icon-size')ic.w=ic.h=Math.max(12,Math.min(600,Number(v)||36));});return;}
- if(id==='image-anchor'&&n){const target=S.display.nodes.find(nn=>nn.id===v),self=S.display.nodes.find(nn=>nn.id===n.id);change(()=>{n.anchorId=v||null;if(target){n.anchorX=self.x-target.x;n.anchorY=self.y-target.y;}else if(self){n.x=self.x;n.y=self.y;}n.offsetX=n.offsetY=0;});return;}
+ if(id==='image-anchor'&&n){const target=S.display.nodes.find(nn=>nn.id===v),self=S.display.nodes.find(nn=>nn.id===n.id);change(()=>{n.anchorId=v||null;delete n.fixedAnchorPosition;if(target&&self){n.anchorX=self.x-target.x;n.anchorY=self.y-target.y;if(n.locked)n.fixedAnchorPosition={x:self.x,y:self.y};}else if(self){n.x=self.x;n.y=self.y;}n.offsetX=n.offsetY=0;});return;}
  if(id.startsWith('edge-')&&S.selectedEdge){const edge=page().edges.find(x=>x.id===S.selectedEdge);if(edge)change(()=>{if(id==='edge-label')edge.label=v;if(id==='edge-source-port')edge.sourcePort=v;if(id==='edge-target-port')edge.targetPort=v;if(id==='edge-arrow')edge.arrow=e.target.checked;if(id==='edge-dashed')edge.dashed=e.target.checked;});return;}
  if(id.startsWith('stroke-')&&S.selectedDrawing){const d=page().drawings.find(s=>s.id===S.selectedDrawing);if(d)change(()=>{if(id==='stroke-color')d.color=v;if(id==='stroke-width')d.width=Math.max(1,Math.min(30,Number(v)||3));});}
 }
@@ -279,7 +279,7 @@ function legacyOnKey(e){
  if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();action('delete');return;}
  const tools={v:'select',h:'pan',b:'block',t:'text',p:'pen'};if(tools[e.key.toLowerCase()])setTool(tools[e.key.toLowerCase()]);
 }
-async function onDrop(e){e.preventDefault();if(S.readOnly)return;const fs=[...e.dataTransfer.files];if(!fs.length)return;try{const pt=worldPoint(e);if(fs.every(f=>f.type.startsWith('image/')))await insertImages(fs,pt);else{const n=selected();for(const file of fs){const m=await uploadFile(file);if(n)change(()=>{if(!n.materials.includes(m.id))n.materials.push(m.id);});}render();toast(n?'Файлы прикреплены к выбранному блоку':'Файлы добавлены в реестр материалов');}}catch(err){toast(err.message,8000);}}
+async function onDrop(e){e.preventDefault();if(S.readOnly||S.branchFocus)return;const fs=[...e.dataTransfer.files];if(!fs.length)return;try{const pt=worldPoint(e);if(fs.every(f=>f.type.startsWith('image/')))await insertImages(fs,pt);else{const n=selected();for(const file of fs){const m=await uploadFile(file);if(n)change(()=>{if(!n.materials.includes(m.id))n.materials.push(m.id);});}render();toast(n?'Файлы прикреплены к выбранному блоку':'Файлы добавлены в реестр материалов');}}catch(err){toast(err.message,8000);}}
 function modal(title,content,footer='',small=false){
  lastFocus=document.activeElement;$('#modal-root').innerHTML=`<div class="modal-overlay"><section class="modal ${small?'small':''}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><div class="spacer"></div><button data-close class="icon ghost" aria-label="Закрыть">×</button></header><div class="modal-content">${content}</div>${footer?`<footer class="modal-foot">${footer}</footer>`:''}</section></div>`;currentModal={title};$('[data-close]').onclick=dismissModal;$('.modal-overlay').addEventListener('click',e=>{if(e.target.classList.contains('modal-overlay')&&currentModal?.kind!=='registry')dismissModal();});const focus=$('input,textarea,button,select',$('.modal'));focus?.focus();$('.modal').addEventListener('keydown',e=>{if(e.key==='Tab'){const elements=$$('button,input,textarea,select,a[href],[contenteditable=true],[tabindex="0"]',$('.modal')).filter(x=>!x.disabled);const first=elements[0],last=elements.at(-1);if(e.shiftKey&&document.activeElement===first){last.focus();e.preventDefault();}else if(!e.shiftKey&&document.activeElement===last){first.focus();e.preventDefault();}}});return $('.modal-content');
 }
@@ -548,7 +548,7 @@ function serverSnapshot(doc){
 }
 function switchPage(index){
  if(!Number.isInteger(index)||!S.project?.pages[index])throw Error('Страница не найдена');
- commitActiveEditors();S.pendingPort=S.addingBus=S.addingBusPair=null;S.drag=null;S.connectionCycle=null;S.selectedSegment=null;stopPlacement();
+ commitActiveEditors();resetBranchFocus();S.pendingPort=S.addingBus=S.addingBusPair=null;S.drag=null;S.connectionCycle=null;S.selectedSegment=null;stopPlacement();
  S.selected.clear();S.selectedEdges.clear();S.selectedDrawings?.clear();S.selectedBuses?.clear();S.selectedEdge=S.selectedBus=S.selectedDrawing=null;S.search='';S.pageIndex=index;
 }
 function historySnapshot(){const p=documentSnapshot();sourceHistory.set(p,{doc:DOC,files:new Map(DOC.sessionFiles),handles:new Map(DOC.sourceHandles||[])});return p;}
@@ -593,14 +593,14 @@ async function activateDocument(project,{name='',handle=null,key=null,server=fal
  if(!server)next.sourceHandles=new Map(await dbGet('sources:'+next.key)||[]);
  const assets=new Map(),discard=()=>{for(const u of assets.values())URL.revokeObjectURL(u);};
  try{await hydrateAssets(prepared,server,assets);if(token!==documentOpenVersion)return discard();commitActiveEditors();while(S.dirty&&!S.readOnly){await save();if(token!==documentOpenVersion)return discard();}}catch(e){discard();throw e;}
- closeFilePopover();closeNodeStatus();finishEdgeLabel(false);closeModal();clearTimeout(saveTimer);for(const u of DOC.urls.values())URL.revokeObjectURL(u);for(const u of liveAssets.values())URL.revokeObjectURL(u);DOC=next;liveAssets=assets;
+ resetBranchFocus();closeFilePopover();closeNodeStatus();finishEdgeLabel(false);closeModal();clearTimeout(saveTimer);for(const u of DOC.urls.values())URL.revokeObjectURL(u);for(const u of liveAssets.values())URL.revokeObjectURL(u);DOC=next;liveAssets=assets;
  S.project=prepared;S.server=server;S.readOnly=readOnly;S.locked=readOnly;S.home=false;S.view={x:60,y:60,z:1};S.pageIndex=Math.max(0,Math.min(prepared.pages.length-1,prepared.viewState?.page||0));
  S.history=[];S.redo=[];S.selected=new Set();S.selectedEdges=new Set();S.selectedEdge=S.selectedBus=S.selectedDrawing=null;S.selectedDrawings?.clear();S.selectedBuses?.clear();S.pendingPort=null;S.addingBus=null;S.materialChecks=new Map();S.popover=null;S.guides=[];S.iconEdit=false;S.placement=null;S.addingBusPair=null;S.search='';S.folded=new Set();S.collapsed=Object.fromEntries(Object.entries(prepared.viewState?.collapsed||{}).map(([k,v])=>[k,new Set(v)]));S.tool='select';S.quickCell=null;quickEdit=null;S.connectionCycle=null;if(S.propertyPainter)S.propertyPainter.source=null;
  S.collapsedRows=rows;S.rowControls=rowControls;S.compact=prepared.viewState?.compact!==false;S.dirty=false;S.fileDirty=!readOnly&&(fileDirty||!name||(project.schemaVersion||1)<3);renderShell();render();fit();if(!readOnly){S.dirty=true;await save();}return prepared;
 }
 
 async function home(){
- const openToken=++documentOpenVersion;commitActiveEditors();if(S.dirty&&!S.readOnly)await save();clearTimeout(saveTimer);closeFilePopover();closeNodeStatus();finishEdgeLabel(false);closeModal();S.home=true;S.pendingPort=null;
+ const openToken=++documentOpenVersion;commitActiveEditors();if(S.dirty&&!S.readOnly)await save();clearTimeout(saveTimer);resetBranchFocus();closeFilePopover();closeNodeStatus();finishEdgeLabel(false);closeModal();S.home=true;S.pendingPort=null;
  recentDocuments=await dbGet('recent-v3')||[];const legacy=await dbGet('project');
  if(openToken!==documentOpenVersion)return;$('#app').classList.remove('read-only');$('#app').innerHTML=`<header class="home-header"><div class="brand"><span class="logo">⌁</span><strong>Pipeline Studio <span class="version-tag">${RELEASE}</span></strong></div><span class="muted">Среда создания интерактивных процессов</span></header><main class="home-main"><section class="home-intro"><div class="caps">ВАШИ ПРОЦЕССЫ. ВАШИ ФАЙЛЫ.</div><h1>С чего начнём?</h1><p>Studio — отдельно. Документы и материалы — в ваших папках.<br>Откройте пайплайн для редактирования или создайте новый.</p><div class="home-actions"><button id="home-new" class="primary"><span>＋</span><strong>Новый документ</strong><small>Чистый холст</small></button><button id="home-open"><span>▱</span><strong>Открыть HTML</strong><small>Документ пайплайна · также поддерживается JSON</small></button></div></section><section class="recent-section"><div class="row spread"><h2>Недавние документы</h2><small>${desktopAvailable()?'Черновики приложения':'Черновики этого браузера'} · не поиск по всему диску</small></div><div class="recent-list">${recentDocuments.map(r=>`<div class="recent-item"><span class="document-mark">▱</span><div class="recent-info"><strong>${esc(r.title)}</strong><small class="recent-path" title="${esc(r.path||r.name)}">${r.path&&r.path!==r.name?'Путь: '+esc(r.path):esc(r.name)+' · полный путь недоступен браузеру'}</small><small>${new Date(r.modified).toLocaleString('ru-RU')}</small></div><button data-recent="${esc(r.key)}">Открыть</button><button class="icon ghost" data-forget="${esc(r.key)}" title="Убрать из недавних, не удаляя файл">×</button></div>`).join('')||'<div class="recent-empty">Здесь появятся документы, которые вы откроете в Studio.<br>HTML-программа больше не содержит вашу рабочую схему.</div>'}</div>${legacy?'<button id="recover-legacy" style="margin-top:16px">Восстановить найденный черновик 0.2</button>':''}${S.serverAvailable?'<button id="home-server" style="margin:16px 0">Открыть серверный черновик</button>':''}</section><section class="home-notes"><div><strong>Редактирование</strong><p>Открыть документ → изменить → сохранить HTML. Автокопия в браузере не заменяет файл на диске.</p></div><div><strong>Просмотр</strong><p>Коллеги открывают HTML документа. Видео и PDF загружаются из папок по ссылкам, а не упаковываются в HTML.</p></div></section></main>`;
  $('#home-new').onclick=()=>inputDialog('Новый документ','Название','Новый процесс',caught(async title=>{const p={format:'pipeline-studio',schemaVersion:3,id:C.uid('project'),title,revision:0,materials:[],pages:[C.createPage('Основной процесс')],settings:{autoBus:true}};await activateDocument(p);S.fileDirty=true;updateStatus();}));
@@ -789,7 +789,11 @@ function v3RenderShell(){
   window.addEventListener('resize',()=>{if(!S.home&&$('#stage')){renderScene();}});window.addEventListener('beforeunload',e=>{if(!S.readOnly&&(S.dirty||S.fileDirty)){e.preventDefault();e.returnValue='';}});
  }
 }
-function render(){if(S.home||!S.project||!$('#stage'))return;legacyRender();applyPanelState();}
+function render(){
+ if(S.home||!S.project||!$('#stage'))return;
+ $('#app').classList.toggle('branch-focused',!!S.branchFocus);
+ legacyRender();applyPanelState();
+}
 function applyPanelState(){const w=$('.workspace');if(!w)return;w.classList.toggle('hide-left',S.leftHidden);w.classList.toggle('hide-right',S.rightHidden);}
 function v3RenderTop(){
  $('#top-actions').innerHTML=(S.locked?'<span class="reader-label">Просмотр документа</span>':button('preview',S.readOnly?'Вернуться в редактор':'Предпросмотр',S.readOnly?'В редактор':'Просмотр'))+button('registry','Открыть реестр материалов','Материалы <span class="badge">'+S.project.materials.length+'</span>')+button('bind-folder','Указать корневую папку документа и материалов','Папка')+(S.readOnly?'':button('save-document','Сохранить HTML документа (Ctrl+S)','Сохранить HTML','primary'))+button('menu','Документ: открыть, сохранить и выдать','···','icon');
@@ -818,7 +822,17 @@ function v4NodeHTML(n,print=false){
  return `<div class="node ${esc(n.type)} ${S.selected.has(n.id)&&!print?'selected':''} ${badges.length?'has-materials':''} ${n.locked?'position-locked':''}" data-node="${esc(n.id)}" style="left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px;background:${esc(n.fill||'#fff')};border-color:${esc(n.stroke||'#9aa8bf')};font-size:${n.fontSize||13}px"><div class="node-body">${body}</div>${attached}${mh}${handles}${toggle}${n.locked&&!print?'<span class="node-lock" title="Положение зафиксировано">▣</span>':''}</div>`;
 }
 function portDescription(n,p){if(p.rowId){const r=n.table?.rowIds.indexOf(p.rowId);return `${portLabels[p.side]} · строка ${(r??0)+1}`;}return (portLabels[p.side]||p.side)+' · блок';}
-function renderScene(){if(S.home||!S.project||!$('#nodes'))return;const checked=S.dragMovement?.feedback,pg=page();S.display=checked?.display&&checked.nodes===pg.nodes&&checked.edges===pg.edges&&checked.buses===pg.buses?checked.display:C.display(pg,collapsed(),S.compact,S.folded,{collapsedRows:collapsedRows()});$('#frames').innerHTML='';const existing=new Map([...$('#nodes').children].map(el=>[el.dataset.node,el]));
+function renderScene(){
+ if(S.home||!S.project||!$('#nodes'))return;
+ const pg=page(),checked=S.dragMovement?.feedback;
+ if(S.branchFocus){
+  S.display=C.isolateCellBranch(pg,S.branchFocus.target,S.compact);
+  if(!S.display){resetBranchFocus();render();return;}
+ }else{
+  S.display=checked?.display&&checked.nodes===pg.nodes&&checked.edges===pg.edges&&checked.buses===pg.buses
+   ?checked.display:C.display(pg,collapsed(),S.compact,S.folded,{collapsedRows:collapsedRows()});
+ }
+ $('#frames').innerHTML='';const existing=new Map([...$('#nodes').children].map(el=>[el.dataset.node,el]));
  if(S.dragMoving&&existing.size===S.display.nodes.length&&S.display.nodes.every(n=>existing.has(n.id))){for(const n of S.display.nodes){const el=existing.get(n.id);el.style.left=n.x+'px';el.style.top=n.y+'px';el.style.width=n.w+'px';el.style.height=n.h+'px';}}
  else{const container=$('#nodes'),keep=new Set();for(const n of S.display.nodes){const html=nodeHTML(n);let el=existing.get(n.id);if(!el||nodeMarkup.get(el)!==html){const template=document.createElement('template');template.innerHTML=html;const next=template.content.firstElementChild;nodeMarkup.set(next,html);if(el)el.replaceWith(next);else container.append(next);el=next;}keep.add(n.id);}for(const [id,el] of existing)if(!keep.has(id))el.remove();}renderEdges();renderInk();transform();updateConnectStatus();highlightCommonPorts();renderGuides();}
 function v4RenderEdges(){
@@ -833,6 +847,7 @@ function v4RenderEdges(){
 }
 function focusNode(id){
  const n=page().nodes.find(n=>n.id===id);if(!n)return;
+ resetBranchFocus();
  for(const key of [...collapsedRows()]){const test=C.rowCollapseState(page(),new Set([key]),new Set());if(test.hidden.has(id))collapsedRows().delete(key);}for(const root of page().nodes.filter(x=>x.collapsible&&collapsed().has(x.id)))if(C.descendants(page(),root.id).has(id))collapsed().delete(root.id);
  S.selected=new Set([id]);S.selectedEdges.clear();S.selectedEdge=S.selectedDrawing=S.selectedBus=null;render();const d=S.display.nodes.find(n=>n.id===id);if(d){const st=$('#stage').getBoundingClientRect(),z=Math.max(.12,Math.min(1.2,(st.width-140)/d.w,(st.height-100)/d.h));S.view={z,x:st.width/2-(d.x+d.w/2)*z,y:st.height/2-(d.y+d.h/2)*z};transform();}
 }
@@ -858,6 +873,7 @@ function v3RenderInspector(){
 }
 function checkpoint(){if(S.readOnly)return;S.history.push(historySnapshot());if(S.history.length>80)S.history.shift();S.redo=[];}
 function restoreHistory(p){
+ resetBranchFocus();
  const rev=S.project.revision,selection=[...S.selected],edge=S.selectedEdge,bus=S.selectedBus,iconEdit=S.iconEdit;
  S.project=p;S.project.revision=rev;if(S.server)applyServerBases(DOC,S.project);S.pageIndex=Math.max(0,Math.min(p.pages.length-1,p.viewState?.page??0));S.compact=p.viewState?.compact??S.compact;const sources=sourceHistory.get(p);if(sources?.doc===DOC){DOC.sessionFiles=new Map(sources.files);DOC.sourceHandles=new Map(sources.handles);}for(const u of DOC.urls.values())URL.revokeObjectURL(u);DOC.urls.clear();S.collapsedRows=Object.fromEntries(Object.entries(p.viewState?.collapsedRows||{}).map(([k,v])=>[k,new Set(v)]));
  if(p.viewState?.collapsed)S.collapsed=Object.fromEntries(Object.entries(p.viewState.collapsed).map(([k,v])=>[k,new Set(v)]));
@@ -1005,15 +1021,67 @@ function v4Nudge(key,step){
   for(const n of page().nodes)if(ids.has(n.id)){if(n.anchorId){if(!ids.has(n.anchorId)){n.anchorX=(n.anchorX||0)+dx;n.anchorY=(n.anchorY||0)+dy;}}else{n.x+=dx;n.y+=dy;}}
  });
 }
+let closeCanvasContext=null;
+function resetBranchFocus(){
+ closeCanvasContext?.();
+ if(!S.branchFocus)return;
+ S.view=S.branchFocus.fullView;
+ S.branchFocus=null;
+}
+function enterBranchFocus(target){
+ commitActiveEditors();
+ if(!C.cellTarget(S.project,target)||page().id!==target.pageId)return;
+ closePopover();closeNodeStatus();stopPlacement();
+ $('#stage').style.removeProperty('cursor');
+ S.pendingPort=S.addingBus=S.addingBusPair=null;
+ S.guides=[];S.connectionCycle=null;
+ S.branchFocus={target,fullView:S.branchFocus?.fullView||{...S.view}};
+ render();fit();
+ $('[data-action="exit-branch-focus"]')?.focus({preventScroll:true});
+}
+function exitBranchFocus(){
+ if(!S.branchFocus)return;
+ resetBranchFocus();render();
+}
 function contextMenu(e){
- if(S.readOnly||currentModal)return;e.preventDefault();$('#canvas-context')?.remove();const nd=e.target.closest('[data-node]'),ed=e.target.closest('[data-edge]'),bus=busAtTarget(e.target);let choices;
+ if(currentModal)return;
+ e.preventDefault();closeCanvasContext?.();
+ const nd=e.target.closest('[data-node]'),td=e.target.closest('[data-table-cell]');
+ const cell=nd&&td?{pageId:page().id,nodeId:nd.dataset.node,rowId:td.dataset.rowId,colId:td.dataset.colId}:null;
+ const focusChoice=cell&&['isolate-branch','Изолировать ячейку и ветку'];
+ if(S.readOnly&&!focusChoice&&!S.branchFocus)return;
+ let choices;
+ if(S.readOnly||S.branchFocus){
+  choices=[focusChoice,S.branchFocus&&['exit-branch-focus','Показать всю схему']].filter(Boolean);
+ }else{
+ const ed=e.target.closest('[data-edge]'),bus=busAtTarget(e.target);
  if(nd){const n=page().nodes.find(n=>n.id===nd.dataset.node);if(!n)return;if(!S.selected.has(n.id))S.selected=new Set([n.id]);S.selectedEdge=S.selectedBus=null;S.selectedEdges.clear();renderInspector();choices=[[n.table?'table-edit':'edit-text',n.table?'Редактировать таблицу':'Редактировать текст'],['attach','Прикрепить материалы'],['enable-collapse',n.collapsible?'Отключить сворачивание цепочки':'Включить сворачивание цепочки'],[n.locked?'unlock':'lock',n.locked?'Снять фиксацию':'Зафиксировать положение'],['duplicate','Дублировать'],['align-menu','Режимы привязки…'],['delete','Удалить']];}
  else if(bus){selectComb(bus);choices=[['bus-add-existing','Добавить существующие связи'],['dissolve-bus','Разделить гребёнку, сохранив связи']];}
  else if(ed){S.selectedEdge=ed.dataset.edge;S.selected.clear();renderInspector();choices=[['combine-auto','Объединить связи в гребёнку'],['route-add','Добавить точку маршрута'],['route-clear','Сбросить маршрут'],['delete','Удалить связь']];}
  else choices=[['context-block','Добавить блок здесь'],['context-table','Добавить таблицу здесь'],['fit','Вписать схему']];
- const pt=worldPoint(e),menu=document.createElement('div');menu.id='canvas-context';menu.className='canvas-context';menu.style.left=Math.max(8,Math.min(e.clientX,innerWidth-270))+'px';menu.style.top=Math.max(8,Math.min(e.clientY,innerHeight-330))+'px';menu.innerHTML=choices.map(([id,t])=>`<button data-context="${id}">${t}</button>`).join('');document.body.append(menu);
- const close=ev=>{if(!menu.contains(ev.target)){menu.remove();document.removeEventListener('pointerdown',close,true);}};document.addEventListener('pointerdown',close,true);
- $$('[data-context]',menu).forEach(b=>b.onclick=caught(async()=>{const cmd=b.dataset.context;menu.remove();document.removeEventListener('pointerdown',close,true);if(cmd.startsWith('context-'))addNode(cmd.slice(8),pt);else if(cmd==='enable-collapse'){const n=selected();change(()=>{n.collapsible=!n.collapsible;if(!n.collapsible)collapsed().delete(n.id);});}else await action(cmd);}));
+ if(focusChoice)choices.unshift(focusChoice);
+ }
+ const pt=worldPoint(e),menu=document.createElement('div'),context=operationContext();
+ menu.id='canvas-context';menu.className='canvas-context';
+ menu.innerHTML=choices.map(([id,text])=>`<button type="button" data-context="${id}">${text}</button>`).join('');
+ document.body.append(menu);
+ const box=menu.getBoundingClientRect();
+ menu.style.left=Math.max(8,Math.min(e.clientX,innerWidth-box.width-8))+'px';
+ menu.style.top=Math.max(8,Math.min(e.clientY,innerHeight-box.height-8))+'px';
+ const closeOutside=event=>{if(!menu.contains(event.target))closeCanvasContext?.();};
+ closeCanvasContext=()=>{
+  menu.remove();document.removeEventListener('pointerdown',closeOutside,true);closeCanvasContext=null;
+ };
+ document.addEventListener('pointerdown',closeOutside,true);
+ $$('[data-context]',menu).forEach(b=>b.onclick=caught(async()=>{
+  const cmd=b.dataset.context;closeCanvasContext?.();
+  if(!contextCurrent(context,true))return;
+  if(cmd==='isolate-branch')enterBranchFocus(cell);
+  else if(cmd.startsWith('context-'))addNode(cmd.slice(8),pt);
+  else if(cmd==='enable-collapse'){
+   const n=selected();change(()=>{n.collapsible=!n.collapsible;if(!n.collapsible)collapsed().delete(n.id);});
+  }else await action(cmd);
+ }));
 }
 function registry(attachNodeId=null,view={}){
  const state={query:view.query||'',scroll:view.scroll||0};let controller=null;
@@ -1264,7 +1332,7 @@ async function init(){
 function sceneBounds(p,d){
  const rects=[...d.nodes],routes=C.bundleRoutes(d);for(const ep of [...routes.routes.values(),...routes.buses.flatMap(b=>[b.lead,b.trunk])])for(const pt of ep.points||[])rects.push({x:pt.x-4,y:pt.y-4,w:8,h:8});
  for(const n of d.nodes)for(const ic of n.icons||[])rects.push({x:n.x+(ic.x??0),y:n.y+(ic.y??0),w:ic.w||36,h:ic.h||36});
- for(const stroke of p.drawings||[]){if(stroke.legacy&&(S.compact||(S.collapsed[p.id]?.size||0)>0))continue;const host=stroke.anchor?d.nodes.find(n=>n.id===stroke.anchor):null;if(stroke.anchor&&!host)continue;for(const pt of stroke.points||[])rects.push({x:pt.x+(host?.x||0)-4,y:pt.y+(host?.y||0)-4,w:8,h:8});}return C.bounds(rects);
+ for(const stroke of d.drawings??p.drawings??[]){if(stroke.legacy&&(S.compact||(S.collapsed[p.id]?.size||0)>0))continue;const host=stroke.anchor?d.nodes.find(n=>n.id===stroke.anchor):null;if(stroke.anchor&&!host)continue;for(const pt of stroke.points||[])rects.push({x:pt.x+(host?.x||0)-4,y:pt.y+(host?.y||0)-4,w:8,h:8});}return C.bounds(rects);
 }
 function preparePrint(mode='visible'){
  if(mode==='detail'&&selected())return legacyPreparePrint(mode);
@@ -1331,13 +1399,21 @@ function renderShell(){
 }
 function applyPanelState(){const w=$('.workspace');if(!w)return;w.classList.toggle('hide-right',S.rightHidden);const b=$('#inspector-toggle');b.innerHTML=uiIcon(S.rightHidden?'chevronLeft':'chevronRight');b.title=S.rightHidden?'Показать свойства':'Скрыть свойства';b.setAttribute('aria-label',b.title);b.setAttribute('aria-expanded',String(!S.rightHidden));}
 function renderTop(){
- $('#top-actions').innerHTML=(S.locked?'<span class="reader-label">Просмотр</span>':command('preview',S.readOnly?'edit':'preview',S.readOnly?'Вернуться в редактор':'Предпросмотр',S.readOnly?'Редактор':'Просмотр'))+command('registry','registry','Материалы документа',`Материалы <span class="counter">${S.project.materials.length}</span>`)+command('bind-folder','folder','Подключить папку материалов')+'<span class="command-separator"></span>'+(S.readOnly?'':command('save-document','save','Сохранить HTML документа · Ctrl+S','Сохранить','save-command'))+command('menu','more','Документ и экспорт');
+ $('#top-actions').innerHTML=S.branchFocus
+  ?'<span class="branch-focus-label" role="status">Изоляция ветки</span>'+command('exit-branch-focus','fit','Показать всю схему · Esc','Показать всю схему','branch-focus-exit')
+  :(S.locked?'<span class="reader-label">Просмотр</span>':command('preview',S.readOnly?'edit':'preview',S.readOnly?'Вернуться в редактор':'Предпросмотр',S.readOnly?'Редактор':'Просмотр'))+command('registry','registry','Материалы документа',`Материалы <span class="counter">${S.project.materials.length}</span>`)+command('bind-folder','folder','Подключить папку материалов')+'<span class="command-separator"></span>'+(S.readOnly?'':command('save-document','save','Сохранить HTML документа · Ctrl+S','Сохранить','save-command'))+command('menu','more','Документ и экспорт');
  $('#page-trigger').innerHTML=uiIcon('pages')+`<span>${esc(page().title)}</span><span class="page-fraction">${S.pageIndex+1}/${S.project.pages.length}</span>`;
 }
 function renderLeft(){/* Sidebar intentionally removed; pages/search open on demand. */}
 function renderSubbar(){renderDock();}
 function v074RenderTools(){v3RenderTools();$$('[data-tool]',$('#tools')).forEach(b=>{b.innerHTML=uiIcon(b.dataset.tool);});$$('[data-action]',$('#tools')).forEach(b=>{b.innerHTML=uiIcon(b.dataset.action==='draw-settings'?'settings':b.dataset.action);});}
-function renderDock(){const d=$('#dock');if(!d)return;d.innerHTML=command('pages','pages','Страницы документа')+command('search-dialog','search','Поиск по схеме · Ctrl+F')+'<span class="command-separator"></span>'+(S.readOnly?'':command('align-menu','magnet','Режимы привязки при перетаскивании','',S.popover==='snap'?'is-active':'' )+command('toggle-chain-move','chain','Перемещать блок вместе с последующими','',S.editModes.moveChain?'is-active':''))+command('visibility-menu','visibility','Видимость значков блоков','',S.popover==='visibility'?'is-active':'')+command('layout-modes','settings','Раздвижение и уплотнение цепочек','',S.popover==='layout'?'is-active':'')+command('expand-all','expand','Раскрыть все цепочки')+command('collapse-all','collapse','Свернуть все цепочки')+'<span class="command-separator"></span>'+command('zoom-out','zoomOut','Уменьшить')+`<span class="zoom-label" id="zoom-label">${Math.round(S.view.z*100)}%</span>`+command('zoom-in','zoomIn','Увеличить')+command('fit','fit','Вписать видимую схему');if(S.popover)renderPopover();}
+function renderDock(){
+ const d=$('#dock');if(!d)return;
+ const zoom=command('zoom-out','zoomOut','Уменьшить')+`<span class="zoom-label" id="zoom-label">${Math.round(S.view.z*100)}%</span>`+command('zoom-in','zoomIn','Увеличить')+command('fit','fit','Вписать видимую схему');
+ if(S.branchFocus){d.innerHTML=zoom;return;}
+ d.innerHTML=command('pages','pages','Страницы документа')+command('search-dialog','search','Поиск по схеме · Ctrl+F')+'<span class="command-separator"></span>'+(S.readOnly?'':command('align-menu','magnet','Режимы привязки при перетаскивании','',S.popover==='snap'?'is-active':'' )+command('toggle-chain-move','chain','Перемещать блок вместе с последующими','',S.editModes.moveChain?'is-active':''))+command('visibility-menu','visibility','Видимость значков блоков','',S.popover==='visibility'?'is-active':'')+command('layout-modes','settings','Раздвижение и уплотнение цепочек','',S.popover==='layout'?'is-active':'')+command('expand-all','expand','Раскрыть все цепочки')+command('collapse-all','collapse','Свернуть все цепочки')+'<span class="command-separator"></span>'+zoom;
+ if(S.popover)renderPopover();
+}
 function closePopover(){finishPipelineGap();S.popover=null;const el=$('#mode-popover');if(el){el.hidden=true;el.innerHTML='';}$$('#dock .is-active').forEach(el=>{if(el.dataset.action!=='toggle-chain-move')el.classList.remove('is-active');});}
 function openPopover(name){S.popover=S.popover===name?null:name;renderDock();if(!S.popover)closePopover();}
 function renderPopover(){if(S.popover==='visibility')return visibilityPopover();const el=$('#mode-popover');if(!el)return;const snap=S.popover==='snap';el.hidden=false;el.className='mode-popover';const check=(id,title,checked,desc)=>`<label class="mode-option"><input type="checkbox" id="${id}" ${checked?'checked':''}><span><strong>${title}</strong>${desc?`<small>${desc}</small>`:''}</span></label>`;
@@ -1370,7 +1446,7 @@ function v4RenderInspector(){
  highlightCommonPorts();
 }
 function arrangeButtons(){return `<div class="notice">Выравнивание действует при перемещении блоков.${command('align-menu','magnet','Настроить привязки','Режимы привязки')}</div>`;}
-function pagesDialog(){modal('Страницы документа',`<div class="stack pages-dialog">${S.project.pages.map((p,i)=>`<button class="page-choice ${i===S.pageIndex?'is-current':''}" data-switch-page="${i}">${uiIcon('pages')}<span><strong>${esc(p.title)}</strong><small>${p.nodes.length} блоков · ${p.edges.length} связей</small></span>${i===S.pageIndex?uiIcon('check'):''}</button>`).join('')}</div>`,S.readOnly?'':`<button id="pages-add">${uiIcon('zoomIn')} Новая страница</button>`,true);
+function pagesDialog(){modal('Страницы документа',`<div class="stack pages-dialog">${S.project.pages.map((p,i)=>`<button class="page-choice ${i===S.pageIndex?'is-current':''}" data-switch-page="${i}">${uiIcon('pages')}<span><strong>${esc(p.title)}</strong><small>${p.nodes.length} блоков · ${p.edges.length} связей</small></span>${i===S.pageIndex?uiIcon('check'):''}</button>`).join('')}</div>`,S.readOnly||S.branchFocus?'':`<button id="pages-add">${uiIcon('zoomIn')} Новая страница</button>`,true);
  $$('[data-switch-page]').forEach(b=>b.onclick=()=>{closeModal();switchPage(Number(b.dataset.switchPage));S.selected.clear();S.selectedEdges.clear();S.selectedEdge=S.selectedBus=S.selectedDrawing=null;S.selectedDrawings?.clear();S.selectedBuses?.clear();S.addingBus=S.pendingPort=null;S.search='';render();fit();});if($('#pages-add'))$('#pages-add').onclick=()=>{closeModal();v3Action('new-page');};}
 function searchDialog(){modal('Найти в документе',`<input id="quick-search" placeholder="Блок, текст таблицы…" value="${esc(S.search)}"><div id="search-results" class="stack material-list" style="margin-top:14px"></div>`,'',true);
  const draw=q=>{const all=S.project.pages.flatMap((p,i)=>p.nodes.filter(n=>(n.title+' '+(n.table?.cells.flat().filter(Boolean).map(c=>c.text).join(' ')||'')).toLowerCase().includes(q.toLowerCase())).map(n=>({p,i,n})));$('#search-results').innerHTML=all.slice(0,70).map(({p,i,n})=>`<button data-result-page="${i}" data-result-node="${esc(n.id)}"><span>${richText(n.title.slice(0,150))}<small>${esc(p.title)}</small></span></button>`).join('')||'<p class="muted">Ничего не найдено.</p>';$$('[data-result-node]').forEach(b=>b.onclick=()=>{switchPage(Number(b.dataset.resultPage));S.search=q;closeModal();render();focusNode(b.dataset.resultNode);});};$('#quick-search').oninput=e=>draw(e.target.value);draw(S.search);$('#quick-search').focus();}
@@ -1480,17 +1556,18 @@ const typeLabels={comment:'Комментарий',block:'Этап',decision:'У
 function iconSource(ic){return ic.src||assetURL(mat(ic.material))||'';}
 function nodeHTML(n,print=false){
  const badgeIds=[...new Set(n.materials||[])].filter(id=>mat(id)),counts={};for(const id of badgeIds){const k=mat(id).kind;counts[k]=(counts[k]||0)+1;}
- const isTable=!!n.table,isDiamond=n.type==='decision',isComment=n.type==='comment',picked=S.selected.has(n.id)&&!print;
- const body=isTable?`<div class="table-title">${label(n)}</div>${S.folded.has(n.id)?'<div class="summary-sub" style="padding:8px">Таблица свёрнута</div>':tableHTML(n)}`:n.type==='image'?`<img class="photo" draggable="false" alt="${esc(n.title)}" src="${esc(assetURL(mat(n.imageMaterial)))}">`:`<div class="node-label" style="text-align:${esc(n.align||'center')};font-weight:${n.bold?'700':'400'};font-style:${n.italic?'italic':'normal'}">${label(n)}</div>`;
- const handles=print||S.readOnly||n.editLocked||n._ghost?'':C.visiblePorts(n,page().edges).map(p=>`<span role="button" tabindex="0" class="port ${p.occupied?'occupied':'free'} ${p.rowId?'row-port':''} ${S.pendingPort?.node===n.id&&C.samePort(n,S.pendingPort.port,p.id)?'pending':''}" data-port="${esc(p.id)}" data-owner="${esc(n.id)}" aria-label="${esc(portDescription(n,p))}" title="${esc(portDescription(n,p))} · ${p.occupied?'занят':'свободен'}" style="left:${p.x*n.w-(isDiamond?0:1)}px;top:${p.y*n.h-(isDiamond?0:1)}px">+</span>`).join('')+(!n.locked?`<span class="resize" data-resize="${esc(n.id)}" ${n.autoSize?'hidden':''}></span>`:'');
+ const focusing=print?null:S.branchFocus,branchStart=focusing?.target.nodeId===n.id;
+ const isTable=!!n.table,isDiamond=n.type==='decision',isComment=n.type==='comment',picked=S.selected.has(n.id)&&!print&&!focusing;
+ const body=isTable?`<div class="table-title">${label(n)}</div>${!focusing&&S.folded.has(n.id)?'<div class="summary-sub" style="padding:8px">Таблица свёрнута</div>':tableHTML(n)}`:n.type==='image'?`<img class="photo" draggable="false" alt="${esc(n.title)}" src="${esc(assetURL(mat(n.imageMaterial)))}">`:`<div class="node-label" style="text-align:${esc(n.align||'center')};font-weight:${n.bold?'700':'400'};font-style:${n.italic?'italic':'normal'}">${label(n)}</div>`;
+ const handles=print||focusing||S.readOnly||n.editLocked||n._ghost?'':C.visiblePorts(n,page().edges).map(p=>`<span role="button" tabindex="0" class="port ${p.occupied?'occupied':'free'} ${p.rowId?'row-port':''} ${S.pendingPort?.node===n.id&&C.samePort(n,S.pendingPort.port,p.id)?'pending':''}" data-port="${esc(p.id)}" data-owner="${esc(n.id)}" aria-label="${esc(portDescription(n,p))}" title="${esc(portDescription(n,p))} · ${p.occupied?'занят':'свободен'}" style="left:${p.x*n.w-(isDiamond?0:1)}px;top:${p.y*n.h-(isDiamond?0:1)}px">+</span>`).join('')+(!n.locked?`<span class="resize" data-resize="${esc(n.id)}" ${n.autoSize?'hidden':''}></span>`:'');
  const attached=(S.visibility.icons||print?n.icons||[]:[]).map((ic,i)=>`<span class="icon-object ${picked&&!S.readOnly?'icon-editable':''} ${picked&&S.selectedIcon===i&&S.iconEdit?'icon-picked':''}" data-icon-index="${i}" data-icon-node="${esc(n.id)}" style="left:${ic.x??Math.max(0,n.w-(ic.w||36)-8)}px;top:${ic.y??Math.max(0,n.h-(ic.h||36)-8)}px;width:${ic.w||36}px;height:${ic.h||ic.w||36}px"><img draggable="false" class="attached-icon" src="${esc(iconSource(ic))}" alt="${esc(ic.glyph||'Иконка')}" title="Перетащите иконку; размер — за нижний правый угол">${picked&&S.iconEdit&&!S.readOnly?'<span class="icon-size-grip" data-icon-resize="true"></span>':''}</span>`).join('');
  const badges=!print&&badgeIds.length?`<div class="material-badges ${isTable?'table-material-footer':''}" style="height:${measureSources(n)}px">${sourceSummary(n,badgeIds)}</div>`:'';
- const toggle=!print&&!n._ghost&&n.collapsible?`<button type="button" class="collapse-node ${collapsed().has(n.id)?'is-collapsed':''}" data-collapse-node="${esc(n.id)}" title="${collapsed().has(n.id)?'Раскрыть цепочку. Скрыто блоков: '+(n.hiddenCount||0):'Свернуть продолжение цепочки'}" aria-label="${collapsed().has(n.id)?'Раскрыть':'Свернуть'} продолжение: ${esc(n.title)}${n.hiddenCount?' · скрыто '+n.hiddenCount+' блоков':''}" aria-expanded="${!collapsed().has(n.id)}">${uiIcon(collapsed().has(n.id)?'chevronRight':'chevronDown')}${n.hiddenCount?`<span>${n.hiddenCount}</span>`:''}</button>`:'';
+ const toggle=!print&&!focusing&&!n._ghost&&n.collapsible?`<button type="button" class="collapse-node ${collapsed().has(n.id)?'is-collapsed':''}" data-collapse-node="${esc(n.id)}" title="${collapsed().has(n.id)?'Раскрыть цепочку. Скрыто блоков: '+(n.hiddenCount||0):'Свернуть продолжение цепочки'}" aria-label="${collapsed().has(n.id)?'Раскрыть':'Свернуть'} продолжение: ${esc(n.title)}${n.hiddenCount?' · скрыто '+n.hiddenCount+' блоков':''}" aria-expanded="${!collapsed().has(n.id)}">${uiIcon(collapsed().has(n.id)?'chevronRight':'chevronDown')}${n.hiddenCount?`<span>${n.hiddenCount}</span>`:''}</button>`:'';
  const corner=Math.min(18,n.w/4,n.h/4),outline=isDiamond?`<svg class="diamond-shape" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon points="50,1 99,50 50,99 1,50" fill="${esc(n.fill||'#fff')}" stroke="${esc(n.stroke||'#9aa8bf')}" stroke-width="1.3" vector-effect="non-scaling-stroke"/></svg>`:isComment?`<svg class="comment-shape" viewBox="0 0 ${n.w} ${n.h}" preserveAspectRatio="none" aria-hidden="true"><path d="M1 1H${n.w-corner}L${n.w-1} ${corner}V${n.h-1}H1Z" fill="${esc(n.fill||'#fff')}" stroke="${esc(n.stroke||'#9aa8bf')}" stroke-width="1.3" vector-effect="non-scaling-stroke"/><path d="M${n.w-corner} 1V${corner}H${n.w-1}" fill="none" stroke="${esc(n.stroke||'#9aa8bf')}" stroke-width="1.3" vector-effect="non-scaling-stroke"/></svg>`:'';
- const h=n.h;return `<div class="node ${esc(n.type)} ${picked?'selected':''} ${badgeIds.length?'has-materials':''} ${n.locked?'position-locked':''} ${n._ghost?'placement-node':''} ${n.anchorId?'anchored-image':''}" data-node="${esc(n.id)}" style="left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${h}px;background:${isDiamond?'transparent':esc(n.fill||'#fff')};border-color:${isDiamond?'transparent':esc(n.stroke||'#9aa8bf')};font-size:${n.fontSize||13}px;color:${esc(n.color||'#18283f')}">${print?'':quickTableTools(n)}${outline}<div class="node-body" ${badgeIds.length&&!isTable&&!isDiamond?`style="padding-bottom:${measureSources(n)}px"`:''}>${body}</div>${attached}${badges}${handles}${toggle}${print?'':rowToggleMarkup(n)}${nodeStateIcons(n,print)}</div>`;
+ const h=n.h;return `<div class="node ${esc(n.type)} ${picked?'selected':''} ${branchStart?'branch-start':''} ${badgeIds.length?'has-materials':''} ${n.locked?'position-locked':''} ${n._ghost?'placement-node':''} ${n.anchorId?'anchored-image':''}" data-node="${esc(n.id)}" style="left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${h}px;background:${isDiamond?'transparent':esc(n.fill||'#fff')};border-color:${isDiamond?'transparent':esc(n.stroke||'#9aa8bf')};font-size:${n.fontSize||13}px;color:${esc(n.color||'#18283f')}">${print||focusing?'':quickTableTools(n)}${outline}<div class="node-body" ${badgeIds.length&&!isTable&&!isDiamond?`style="padding-bottom:${measureSources(n)}px"`:''}>${body}</div>${attached}${badges}${handles}${toggle}${print||focusing?'':rowToggleMarkup(n)}${focusing?'':nodeStateIcons(n,print)}</div>`;
 }
 function segmentGrips(e,p){
- if(S.readOnly||e.proxy||p.bus||e.style==='straight')return '';
+ if(S.readOnly||S.branchFocus||e.proxy||p.bus||e.style==='straight')return '';
  const z=Math.max(.05,S.view.z);return C.routeSegments(p).map(seg=>{
   const selected=S.selectedSegment?.edge===e.id&&S.selectedSegment.index===seg.index,attrs=`data-segment-edge="${esc(e.id)}" data-segment-index="${seg.index}"`;
   return `<path class="segment-hit ${selected?'segment-picked':''}" ${attrs} d="M${seg.a.x},${seg.a.y} L${seg.b.x},${seg.b.y}" style="stroke-width:${selected?4/z:12/z}px"><title>${seg.terminal?'Конечный участок закреплён за портом':'Выбрать участок · Delete — удалить изгиб · тянуть — переместить'}</title></path>`+(!seg.terminal&&seg.length*z>16?`<rect class="segment-grip ${selected?'is-selected':''}" ${attrs} x="${(seg.a.x+seg.b.x)/2-4/z}" y="${(seg.a.y+seg.b.y)/2-4/z}" width="${8/z}" height="${8/z}" rx="${2/z}" style="cursor:${seg.vertical?'ew':'ns'}-resize"/>`:'');
@@ -1749,7 +1826,7 @@ function measureCell(n,cell,width){
 }
 C.measureCell=measureCell;
 function materialControls(n){const ids=[...new Set(n.materials||[])];return `${S.readOnly?'':command('attach','registry','Прикрепить материалы к блоку','Прикрепить','property-wide')}<div class="property-materials">${ids.map(id=>`<div class="property-file-row">${materialChip(id)}${S.readOnly?'':`<button class="ui-command" data-detach="${esc(id)}" title="Отвязать от блока">${uiIcon('close')}</button>`}</div>`).join('')||'<small>Нет прикреплённых материалов</small>'}</div>`;}
-function showNodeMaterials(n,kind){const ms=[...new Set(n.materials||[])].map(findMaterial).filter(m=>m&&(!kind||m.kind===kind));modal('Источники блока',`<p class="sources-context">${richText(n.title)}</p><div class="sources-list">${ms.map(m=>materialChip(m.id)).join('')||'<p class="muted">Источников пока нет.</p>'}</div>`,S.readOnly?'':`<button id="sources-edit">${uiIcon('registry')} Открыть материалы</button>`,true);const dialog=$('.modal');dialog.classList.add('sources-dialog');makeDialogResizable(dialog,'sources');if($('#sources-edit'))$('#sources-edit').onclick=()=>registry(n.id);}
+function showNodeMaterials(n,kind){const ms=[...new Set(n.materials||[])].map(findMaterial).filter(m=>m&&(!kind||m.kind===kind));modal('Источники блока',`<p class="sources-context">${richText(n.title)}</p><div class="sources-list">${ms.map(m=>materialChip(m.id)).join('')||'<p class="muted">Источников пока нет.</p>'}</div>`,S.readOnly||S.branchFocus?'':`<button id="sources-edit">${uiIcon('registry')} Открыть материалы</button>`,true);const dialog=$('.modal');dialog.classList.add('sources-dialog');makeDialogResizable(dialog,'sources');if($('#sources-edit'))$('#sources-edit').onclick=()=>registry(n.id);}
 
 function jumpToCell(target){const hit=C.cellTarget(S.project,target);if(!hit)return toast('Ячейка удалена или отсутствует в этом документе');
  closeModal();switchPage(S.project.pages.indexOf(hit.page));S.folded.delete(hit.node.id);focusNode(hit.node.id);
@@ -2127,7 +2204,7 @@ function constraintHTML(edge){const configs=[];if(edge.bus){const b=page().buses
  return configs.length?section('connection-constraints','Привязки этой связи',configs.map(({kind,obj,title})=>{const enabled=kind==='bus'?obj.symmetry===undefined?obj.autoAlign:obj.symmetry:kind==='condition'?obj.branchSymmetry:obj.enabled!==false,protectedConfig=constraintProtected(kind,obj),axis=kind==='bus'?obj.symmetryAxis:kind==='condition'?obj.branchAxis:obj.axis,gap=kind==='bus'?obj.alignGap:kind==='condition'?obj.branchGap:obj.gap,cross=kind==='condition'?obj.branchCrossings:obj.allowCrossings,group=S.display.symmetryGroups?.find(g=>kind==='condition'?g.id==='condition:'+obj.id:g.id===obj.id||g.bus===obj.id),positions=group?.heads.map(id=>S.display.nodes.find(n=>n.id===id)).filter(Boolean).map(n=>n[group.axis]+n[group.axis==='x'?'w':'h']/2).sort((a,b)=>a-b),step=positions?.length>1?(positions.at(-1)-positions[0])/(positions.length-1):null;
   return `<div class="connection-constraint"><strong>${title}</strong><p>Ось: ${axis==='x'?'слева и справа':'сверху и снизу'} · минимум ${gap||64} px<br>Пересечения: ${cross?'разрешены':'запрещены'}${Number.isFinite(step)?'<br>Текущий шаг ветвей: '+Math.round(step)+' px':''}</p>${S.readOnly?`<p>Сохранение симметрии: ${enabled?'включено':'выключено'}</p>`:`<label class="check-row"><input type="checkbox" data-constraint-kind="${kind}" data-constraint-id="${esc(obj.id)}" ${enabled?'checked':''} ${protectedConfig?'disabled':''}>Сохранять симметрию</label>`}${kind==='bus'?`<button data-open-constraint-bus="${esc(obj.id)}">${S.readOnly?'Показать гребёнку':'Настроить гребёнку'}</button>`:kind==='condition'?`<button data-open-constraint-condition="${esc(obj.id)}">Настроить выходы условия</button>`:`<button data-open-constraint-set="${esc(obj.id)}">Выбрать и настроить все ${obj.edges.length} связи</button>`}${kind==='set'&&!S.readOnly?`<button data-remove-constraint="${esc(obj.id)}" ${protectedConfig?'disabled':''}>Убрать привязку</button>`:''}</div>`;}).join(''),true,'symmetry'):section('connection-constraints','Привязки этой связи','<p class="property-subtitle">У этой связи нет сохранённой привязки симметрии.</p>',true,'symmetry');
 }
-function renderInspector(){if(!S.project)return;const count=Object.values(selectionV075()).reduce((a,b)=>a+b.length,0);if(count>1&&S.tool!=='painter'){bulkInspector079();return;}v078RenderInspector();const panel=$('#inspector');if(!panel)return;
+function renderInspector(){if(!S.project)return;if(S.branchFocus){const panel=$('#inspector');if(panel)panel.innerHTML='';return;}const count=Object.values(selectionV075()).reduce((a,b)=>a+b.length,0);if(count>1&&S.tool!=='painter'){bulkInspector079();return;}v078RenderInspector();const panel=$('#inspector');if(!panel)return;
  const n=selected(),b=S.selectedBus&&page().buses.find(b=>b.id===S.selectedBus),edge=S.selectedEdge&&page().edges.find(e=>e.id===S.selectedEdge);
  const font=panel.querySelector('#node-font');if(font){[font.min,font.max]=C.presentationRanges.fontSize;}
  if(b){panel.querySelector('[data-section$=":selected-symmetry"]')?.remove();const content=panel.querySelector('[data-section$=":bus-symmetry"] .property-content');if(content&&!S.readOnly){content.insertAdjacentHTML('beforeend',behaviorOption('bus-crossings','Разрешить пересечение ветвей',b.allowCrossings===true,'Выключено: расстояние учитывает всё продолжение ветвей')+(b.mode==='free'?behaviorOption('bus-move-together','Переносить объединённые начала вместе',b.moveTogether!==false,'Любое начало переносит и сворачивает всю общую цепочку'):'')+`<label class="field">Ось симметрии<select id="bus-symmetry-axis"><option value="auto" ${!b.symmetryAxis?'selected':''}>По портам</option><option value="y" ${b.symmetryAxis==='y'?'selected':''}>Сверху и снизу</option><option value="x" ${b.symmetryAxis==='x'?'selected':''}>Слева и справа</option></select></label>${command('bus-symmetry-align','symmetry','Разово выровнять ветви общей гребёнки','Выровнять сейчас','property-wide')}<small>Симметрия принадлежит всей гребёнке. Команда выравнивания использует эту же настройку.</small>`);for(const el of content.querySelectorAll('input,select,button'))el.disabled=!!b.editLocked;}}
@@ -2173,21 +2250,40 @@ function onChange(e){const el=e.target,id=el.id,obj=selectedObject();if(S.select
  }
  return v078OnChange(e);
 }
-async function action(a){if(['selected-symmetry-align','bus-symmetry-align'].includes(a)){if(S.readOnly)return;const b=a==='bus-symmetry-align'&&page().buses.find(b=>b.id===S.selectedBus),ids=b?page().edges.filter(e=>e.bus===b.id).map(e=>e.id):selectedConnectionIds(),opts=b?{persistent:b.symmetry===true,gap:b.alignGap||64,axis:b.symmetryAxis||(b.orientation==='horizontal'?'x':'y'),allowCrossings:b.allowCrossings===true}:{persistent:$('#selected-symmetry-persistent')?.checked!==false,gap:Number($('#selected-symmetry-gap')?.value)||64,axis:$('#selected-symmetry-axis')?.value||'y',allowCrossings:$('#selected-symmetry-crossings')?.checked===true};try{const next=C.setEdgeSymmetry(page(),ids,opts);change(()=>S.project.pages[S.pageIndex]=next);}catch(err){toast(err.message);}return;}
+async function action(a){
+ if(a==='exit-branch-focus')return exitBranchFocus();
+ if(['selected-symmetry-align','bus-symmetry-align'].includes(a)){if(S.readOnly)return;const b=a==='bus-symmetry-align'&&page().buses.find(b=>b.id===S.selectedBus),ids=b?page().edges.filter(e=>e.bus===b.id).map(e=>e.id):selectedConnectionIds(),opts=b?{persistent:b.symmetry===true,gap:b.alignGap||64,axis:b.symmetryAxis||(b.orientation==='horizontal'?'x':'y'),allowCrossings:b.allowCrossings===true}:{persistent:$('#selected-symmetry-persistent')?.checked!==false,gap:Number($('#selected-symmetry-gap')?.value)||64,axis:$('#selected-symmetry-axis')?.value||'y',allowCrossings:$('#selected-symmetry-crossings')?.checked===true};try{const next=C.setEdgeSymmetry(page(),ids,opts);change(()=>S.project.pages[S.pageIndex]=next);}catch(err){toast(err.message);}return;}
  if(a==='select-whole-connection'&&S.selectedEdge){selectConnection(page().edges.find(e=>e.id===S.selectedEdge));return;}return v078Action(a);
 }
 function finishEdgeLabel(commit=true){const edit=quickEdgeEdit;quickEdgeEdit=null;if(!commit)edgePress=null;const input=$('#quick-edge-label');if(input){input.onblur=null;input.remove();}if(!edit||!commit||S.readOnly)return;const edge=page().edges.find(e=>e.id===edit.edge);if(!edge||edge.editLocked||page().buses.find(b=>b.id===edge.bus)?.editLocked)return;if(edge.label===edit.value&&edge.labelSegment===edit.segment)return;change(()=>{edge.label=edit.value;edge.labelSegment=edit.segment;edge.labelCentered=true;});}
 function beginEdgeLabel(id,event){if(S.readOnly)return;const edge=page().edges.find(e=>e.id===id);if(!edge||edge.editLocked||page().buses.find(b=>b.id===edge.bus)?.editLocked)return;finishEdgeLabel();finishQuickEdit();const route=S.bundle.routes.get(id),segments=C.routeSegments(route),point=worldPoint(event);if(!segments.length)return;
  const distance=s=>{const dx=s.b.x-s.a.x,dy=s.b.y-s.a.y,t=Math.max(0,Math.min(1,((point.x-s.a.x)*dx+(point.y-s.a.y)*dy)/(dx*dx+dy*dy||1)));return Math.hypot(point.x-s.a.x-dx*t,point.y-s.a.y-dy*t);},segment=[...segments].sort((a,b)=>distance(a)-distance(b))[0];quickEdgeEdit={edge:id,segment:segment.index,value:edge.label||''};const stage=$('#stage'),r=stage.getBoundingClientRect(),input=document.createElement('input');input.id='quick-edge-label';input.type='text';input.value=edge.label||'';input.setAttribute('aria-label','Подпись на связи');input.placeholder='Подпись · Enter';input.style.left=Math.max(8,Math.min(r.width-248,event.clientX-r.left-110))+'px';input.style.top=Math.max(8,Math.min(r.height-46,event.clientY-r.top-42))+'px';stage.append(input);input.oninput=()=>{if(quickEdgeEdit)quickEdgeEdit.value=input.value;};input.onpointerdown=e=>e.stopPropagation();input.onclick=e=>e.stopPropagation();input.onkeydown=e=>{if((e.ctrlKey||e.metaKey)&&(e.code==='KeyS'||e.key?.toLowerCase()==='s'))return;e.stopPropagation();if(e.key==='Enter'){e.preventDefault();finishEdgeLabel();}if(e.key==='Escape'){e.preventDefault();finishEdgeLabel(false);}};input.onblur=()=>finishEdgeLabel();input.focus();input.select();
 }
-function onDoubleClick(e){const hit=e.target.closest('[data-segment-edge],[data-edge]');if(hit&&S.tool==='select'){e.preventDefault();const id=hit.dataset.segmentEdge||hit.dataset.edge;if(quickEdgeEdit?.edge!==id)beginEdgeLabel(id,e);return;}return v078OnDoubleClick(e);}
-function onPointerDown(e){if(e.target.closest('#quick-edge-label'))return;if(quickEdgeEdit)finishEdgeLabel();if(e.altKey)return v078OnPointerDown(e);
+function onDoubleClick(e){if(S.branchFocus)return;const hit=e.target.closest('[data-segment-edge],[data-edge]');if(hit&&S.tool==='select'){e.preventDefault();const id=hit.dataset.segmentEdge||hit.dataset.edge;if(quickEdgeEdit?.edge!==id)beginEdgeLabel(id,e);return;}return v078OnDoubleClick(e);}
+function onPointerDown(e){
+ if(S.branchFocus){
+  if(![0,1].includes(e.button)||e.target.closest('button,a,[data-open-material]'))return;
+  e.preventDefault();const initial={...S.view};
+  startDrag(e,ev=>{S.view.x=initial.x+ev.clientX-e.clientX;S.view.y=initial.y+ev.clientY-e.clientY;transform();});
+  return;
+ }
+ if(e.target.closest('#quick-edge-label'))return;if(quickEdgeEdit)finishEdgeLabel();if(e.altKey)return v078OnPointerDown(e);
  const hit=e.target.closest('[data-segment-edge],[data-edge]'),grip=hit?.classList.contains('segment-grip');if(hit&&S.tool==='select'&&e.button===0&&!S.space&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey){const id=hit.dataset.segmentEdge||hit.dataset.edge,now=performance.now(),previous=edgePress;edgePress=grip?null:{id,time:now,x:e.clientX,y:e.clientY};if(previous?.id===id&&now-previous.time<400&&Math.hypot(e.clientX-previous.x,e.clientY-previous.y)<6){edgePress=null;e.preventDefault();beginEdgeLabel(id,e);return;}if(!grip&&!hit.classList.contains('edge-label')&&S.selectedEdge===id&&!S.selectedSegment){e.preventDefault();return;}}else edgePress=null;
  const segment=e.target.closest('[data-segment-edge]');if(segment&&S.tool==='select'&&e.button===0&&!S.space){const edge=page().edges.find(q=>q.id===segment.dataset.segmentEdge);if(!edge)return;if(segment.classList.contains('segment-grip'))return v074OnPointerDown(e);e.preventDefault();selectConnection(edge,e.shiftKey||e.ctrlKey||e.metaKey);return;}
  const label=e.target.closest('.edge-label[data-edge]');if(label&&S.selectedEdge===label.dataset.edge&&!S.readOnly&&e.button===0&&!e.altKey&&!e.shiftKey){const edge=page().edges.find(q=>q.id===label.dataset.edge);if(edge&&!edge.editLocked&&!page().buses.find(b=>b.id===edge.bus)?.editLocked){e.preventDefault();const start=worldPoint(e),base={x:edge.labelOffsetX||0,y:edge.labelOffsetY||0};let moved=false;startDrag(e,ev=>{const p=worldPoint(ev),dx=p.x-start.x,dy=p.y-start.y;if(!moved&&Math.hypot(dx,dy)*S.view.z<3)return;if(!moved){checkpoint();moved=true;}edge.labelOffsetX=base.x+dx;edge.labelOffsetY=base.y+dy;const shown=S.display.edges.find(q=>q.id===edge.id);Object.assign(shown,{labelOffsetX:edge.labelOffsetX,labelOffsetY:edge.labelOffsetY});renderEdges();},()=>{if(moved){changed();renderInspector();}});return;}}
  return v078OnPointerDown(e);
 }
-function onKey(e){if((e.ctrlKey||e.metaKey)&&(e.code==='KeyS'||e.key?.toLowerCase()==='s')&&S.project&&!S.home){e.preventDefault();if(currentModal){toast('Сначала примените или отмените изменения в открытом окне.');return;}saveDocument(e.shiftKey).catch(err=>toast(err.message,9000));return;}if(e.key==='Escape'&&quickEdgeEdit){e.preventDefault();finishEdgeLabel(false);return;}return v078OnKey(e);}
+function onKey(e){
+ if((e.ctrlKey||e.metaKey)&&(e.code==='KeyS'||e.key?.toLowerCase()==='s')&&S.project&&!S.home){e.preventDefault();if(currentModal){toast('Сначала примените или отмените изменения в открытом окне.');return;}saveDocument(e.shiftKey).catch(err=>toast(err.message,9000));return;}
+ if(e.key==='Escape'&&closeCanvasContext){e.preventDefault();closeCanvasContext();return;}
+ if(S.branchFocus&&!currentModal){
+  if(e.key==='Escape'){e.preventDefault();exitBranchFocus();}
+  else if((e.ctrlKey||e.metaKey)&&e.code==='KeyO'){e.preventDefault();openDocumentPicker().catch(err=>toast(err.message));}
+  return;
+ }
+ if(e.key==='Escape'&&quickEdgeEdit){e.preventDefault();finishEdgeLabel(false);return;}
+ return v078OnKey(e);
+}
 function renderEdges(){v078RenderEdges();for(const hit of $$('.segment-hit'))hit.setAttribute('aria-label','Связь целиком. Двойной щелчок — подпись');for(const grip of $$('.segment-grip')){grip.dataset.segmentGrip='true';grip.setAttribute('aria-label','Участок связи: переместить или удалить изгиб');}for(const hit of $$('.edge-hit[data-edge]'))hit.setAttribute('aria-label',page().edges.find(e=>e.id===hit.dataset.edge)?.bus?'Гребёнка. Alt + щелчок — выбрать отдельную связь':'Связь целиком. Двойной щелчок — подпись');}
 document.addEventListener('click',e=>{const open=e.target.closest('[data-open-constraint-bus]'),setButton=e.target.closest('[data-open-constraint-set]'),conditionButton=e.target.closest('[data-open-constraint-condition]'),remove=e.target.closest('[data-remove-constraint]');if(open){const b=page().buses.find(b=>b.id===open.dataset.openConstraintBus);if(b)selectComb(b);}if(setButton){const set=page().symmetrySets.find(s=>s.id===setButton.dataset.openConstraintSet);if(set){S.selected.clear();S.selectedBuses.clear();S.selectedBus=S.selectedEdge=S.selectedSegment=null;S.selectedEdges=new Set(set.edges);render();}}if(conditionButton){S.selectedEdges.clear();S.selectedBuses.clear();S.selectedBus=S.selectedEdge=S.selectedSegment=null;S.selected=new Set([conditionButton.dataset.openConstraintCondition]);render();}if(remove&&!S.readOnly){const config=page().symmetrySets.find(s=>s.id===remove.dataset.removeConstraint);if(config&&!constraintProtected('set',config))change(()=>{const next=C.releaseSymmetry(page(),config.id);next.symmetrySets=next.symmetrySets.filter(s=>s.id!==config.id);S.project.pages[S.pageIndex]=next;});}});
 document.addEventListener('selectstart',e=>{const el=e.target.nodeType===1?e.target:e.target.parentElement;if(!el?.closest('input,textarea,[contenteditable="true"]'))e.preventDefault();});

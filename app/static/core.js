@@ -94,7 +94,7 @@ function display(page,collapsed=new Set(),compact=true,foldedTables=new Set()){
   edgeMap.set(key,{...e,source:src,target:dst,sourcePort:src===e.source?e.sourcePort:'right',targetPort:dst===e.target?e.targetPort:'left',count:1,proxy,originalIds:[e.id]});
  }
  const hidden=new Set(page.nodes.filter(n=>map.get(n.id)!==n.id).map(n=>n.id)),hiddenOwner=new Map([...hidden].map(id=>[id,map.get(id)]));
- return {nodes:out,edges:[...edgeMap.values()],frames,map,hidden,hiddenOwner,buses:page.buses||[]};
+ return {nodes:out,edges:[...edgeMap.values()],frames,map,hidden,hiddenOwner,buses:page.buses||[],legacyCompact:compact};
 }
 /** Bake a projected compact view before precise manual positioning. Hidden contents are translated, not discarded. */
 function materializeLayout(page,d){
@@ -1112,7 +1112,7 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
   const branches=heads.map(n=>({n,ids:new Set([n.id,...relativeDescendantsGraph(pg,n.id)])}));for(const b of branches)b.ids.delete(hub);
   const count=new Map();for(const b of branches)for(const id of b.ids)count.set(id,(count.get(id)||0)+1);
   for(const b of branches)b.ids=new Set([...b.ids].filter(id=>count.get(id)===1));
-  if(branches.some(b=>[...b.ids].some(id=>{const n=shown.get(id);return n&&!annotation(n)&&(n.locked)})))return;
+  if(branches.some(b=>[...b.ids].some(id=>{const n=shown.get(id);return n?.locked&&!n.anchorId&&!annotation(n)})))return;
   let step=Math.max(Math.max(...heads.map(n=>n[size]))+gap,(heads.at(-1)[axis]-heads[0][axis])/(heads.length-1));const mid=parent[axis]+parent[size]/2;
   const edgeFor=n=>edges.find(e=>e.target===n.id),end=n=>C.endpoint(n,edgeFor(n).targetPort,'left');
   const common=heads.reduce((sum,n)=>sum+end(n)[perp],0)/heads.length;
@@ -1130,7 +1130,7 @@ C.hyphenateRussian=text=>String(text||'').replace(/[А-Яа-яЁё]{4,}/g,word=>
   // Stop at other comb terminals. Shared downstream nodes retain their position.
   const g=C.graph({...pg,edges:pg.edges.filter(e=>e.bus!==b.id)}),branches=all.map(t=>{const ids=new Set([t.n.id]),queue=[t.n.id];for(let i=0;i<queue.length;i++)for(const id of g.adj.get(queue[i])||[])if(id!==hub?.id&&!heads.has(id)&&!ids.has(id)){ids.add(id);queue.push(id);}return {...t,ids};}),counts=new Map();for(const t of branches)for(const id of t.ids)counts.set(id,(counts.get(id)||0)+1);
   for(const t of branches)t.ids=new Set([...t.ids].filter(id=>counts.get(id)===1));
-  if(branches.some(t=>[...t.ids].some(id=>{const n=shown.get(id);return n&&!annotation(n)&&(n.locked)})))return;
+  if(branches.some(t=>[...t.ids].some(id=>{const n=shown.get(id);return n?.locked&&!n.anchorId&&!annotation(n)})))return;
   const mid=hubPoint?hubPoint[axis]:(sources[0].point[axis]+sources.at(-1).point[axis])/2,gap=Math.max(16,Number(b.alignGap)||64);
   for(const group of groups){let step=group.length>1?(group.at(-1).point[axis]-group[0].point[axis])/(group.length-1):0;
    for(let i=1;i<group.length;i++){const a=group[i-1],c=group[i];step=Math.max(step,a.n[axis]+a.n[size]-a.point[axis]+c.point[axis]-c.n[axis]+gap);}
@@ -1180,13 +1180,34 @@ Core.deleteSelection=function(pg,selection){
 /* A duplicated subgraph owns its combs and symmetry constraints. A partial
    comb with one copied connection becomes an independent connection. */
 Core.duplicateSelection=function(pg,selection,view=null){
- const out=Core.clone(pg),wanted=new Set(selection),copies=pg.nodes.filter(n=>wanted.has(n.id)).map(Core.clone),ids=new Map(copies.map(n=>[n.id,Core.uid('node')])),edgeIds=new Map(),busIds=new Map(),byId=new Map(pg.nodes.map(n=>[n.id,n]));
- const shown=new Map((view||Core.display(pg,new Set(),false)).nodes.map(n=>[n.id,n])),fallback=Core.anchorPositions(pg),position=id=>shown.get(id)||fallback.get(id);
- for(const cp of copies){const old=cp.id,visible=position(old);cp.id=ids.get(old);if(ids.has(cp.anchorId)){const host=position(cp.anchorId);cp.anchorX=visible.x-host.x;cp.anchorY=visible.y-host.y;cp.anchorId=ids.get(cp.anchorId);}else cp.anchorId=null;cp.x=visible.x+38;cp.y=visible.y+38;cp.offsetX=cp.offsetY=0;out.nodes.push(cp);out.groups?.forEach(g=>{if(g.members.includes(old))g.members.push(cp.id);});}
+ const out=Core.clone(pg),wanted=new Set(selection),copies=pg.nodes.filter(n=>wanted.has(n.id)).map(Core.clone);
+ const ids=new Map(copies.map(n=>[n.id,Core.uid('node')])),edgeIds=new Map(),busIds=new Map();
+ const reference=view||projectLike(pg),shown=new Map(reference.nodes.map(n=>[n.id,n])),authored=Core.anchorPositions(pg);
+ const position=id=>shown.get(id)||authored.get(id);
+ const compactTargets=new Map(),fixedAttachments=new Map();
+ for(const copy of copies){
+  const original=copy.id,visible=position(original),target={x:visible.x+38,y:visible.y+38};
+  copy.id=ids.get(original);
+  delete copy.legacyCompactOffset;
+  delete copy.fixedAnchorPosition;
+  if(ids.has(copy.anchorId)){
+   const host=position(copy.anchorId);
+   copy.anchorX=visible.x-host.x;copy.anchorY=visible.y-host.y;
+   copy.anchorId=ids.get(copy.anchorId);
+   if(copy.locked)fixedAttachments.set(copy.id,target);
+  }else copy.anchorId=null;
+  const origin=reference.legacyCompact?authored.get(original):visible;
+  writePosition(copy,{x:origin.x+38,y:origin.y+38});
+  if(reference.legacyCompact&&!copy.anchorId)compactTargets.set(copy.id,target);
+  out.nodes.push(copy);
+  for(const group of out.groups||[])if(group.members.includes(original))group.members.push(copy.id);
+ }
  const edges=pg.edges.filter(e=>ids.has(e.source)&&ids.has(e.target)).map(e=>{const id=Core.uid('edge');edgeIds.set(e.id,id);return {...Core.clone(e),id,source:ids.get(e.source),target:ids.get(e.target)};});
  for(const bus of pg.buses||[]){const members=edges.filter(e=>e.bus===bus.id);if(members.length<2)continue;const copy=Core.clone(bus);copy.id=Core.uid('bus');if(ids.has(bus.hub))copy.hub=ids.get(bus.hub);else{delete copy.hub;copy.mode='free';}if(copy.mode==='free'&&Number.isFinite(copy.axis))copy.axis+=38;busIds.set(bus.id,copy.id);(out.buses||=[]).push(copy);}
  for(const e of edges){if(busIds.has(e.bus))e.bus=busIds.get(e.bus);else delete e.bus;}out.edges.push(...edges);
  for(const set of pg.symmetrySets||[]){const members=(set.edges||[]).filter(id=>edgeIds.has(id)).map(id=>edgeIds.get(id));if(members.length>=2)(out.symmetrySets||=[]).push({...Core.clone(set),id:Core.uid('symmetry'),edges:members});}
+ pinAttachments(out,fixedAttachments);
+ placeInLegacyCompactView(out,reference,compactTargets);
  return {page:out,ids:copies.map(n=>n.id)};
 };
 /* Routes belonging to a non-crossing symmetry constraint share a routing
@@ -1289,7 +1310,7 @@ Core.duplicateSelection=function(pg,selection,view=null){
   const source=ns.get(edges[0].source),axis=set.axis||'y',cross=axis==='y'?'x':'y',size=axis==='y'?'h':'w';
   const items=edges.map(e=>({e,n:ns.get(e.target),point:C.endpoint(ns.get(e.target),e.targetPort,'left')})).sort((a,b)=>a.point[axis]-b.point[axis]);
   const branches=exclusiveBranches(pg,items.map(t=>t.n.id));
-  if(branches.some(b=>[...b.ids].some(id=>ns.get(id)?.locked&&!annotation(ns.get(id)))))return;
+  if(branches.some(b=>[...b.ids].some(id=>{const n=ns.get(id);return n?.locked&&!n.anchorId&&!annotation(n)})))return;
   const mid=edges.reduce((sum,e)=>sum+C.endpoint(source,e.sourcePort,'right')[axis],0)/edges.length;
   const gap=Math.max(16,Number(set.gap)||64);let step=(items.at(-1).point[axis]-items[0].point[axis])/(items.length-1);
   for(let i=1;i<items.length;i++){const a=items[i-1],b=items[i];step=Math.max(step,a.n[axis]+a.n[size]-a.point[axis]+b.point[axis]-b.n[axis]+gap);}
@@ -1659,7 +1680,7 @@ Core.duplicateSelection=function(pg,selection,view=null){
   if(patch.symmetry===false){const ids=pg.buses.filter(b=>selected('bus',b)).map(b=>b.id);if(ids.length)out=releaseSymmetry(out,ids,'bus');}
   if(patch.branchSymmetry===false){const ids=pg.nodes.filter(n=>n.type==='decision'&&selected('node',n)).map(n=>n.id);if(ids.length)out=releaseSymmetry(out,ids,'condition');}
   for(const [list,kind] of [['nodes','node'],['edges','edge'],['buses','bus'],['drawings','drawing']])for(const item of out[list]||[]){if(!(selection[kind]||[]).includes(item.id)||(category!=='all'&&category!==kind&&category!==(kind==='node'?item.type:kind)))continue;if((item.editLocked&&!Object.hasOwn(patch,'editLocked'))||(kind==='edge'&&out.buses?.find(b=>b.id===item.bus)?.editLocked))continue;
-   for(const [key,value] of Object.entries(patch)){if(!allowed[kind].includes(key))continue;if(kind==='node'&&item.locked&&['w','h','autoSize','tableAutoSize'].includes(key))continue;if(key==='tableBodyPosition'&&!['center','header'].includes(value))throw Error('Некорректное положение портов таблицы');if(key.startsWith('branch')&&item.type!=='decision'||key.startsWith('table')&&!item.table)continue;
+   for(const [key,value] of Object.entries(patch)){if(key==='locked'||!allowed[kind].includes(key))continue;if(kind==='node'&&item.locked&&['w','h','autoSize','tableAutoSize'].includes(key))continue;if(key==='tableBodyPosition'&&!['center','header'].includes(value))throw Error('Некорректное положение портов таблицы');if(key.startsWith('branch')&&item.type!=='decision'||key.startsWith('table')&&!item.table)continue;
     if(key==='title'){item.title=value;delete item.html;}else if(key==='color')item[kind==='drawing'?'color':'stroke']=value;else if(key==='textColor')item.color=value;
     else if(key==='type'){if(['block','decision','comment','note'].includes(item.type)&&['block','decision','comment'].includes(value)&&!item.table)item.type=value;}
     else if(key==='tableAutoSize')C.setTableAutoSize(item,value);else if(key==='tableWordWrap')item.table.wordWrap=value;
@@ -1674,20 +1695,126 @@ Core.duplicateSelection=function(pg,selection,view=null){
 
 Core.createPage=function(title='Новый процесс'){return {id:Core.uid('page'),title,nodes:[],edges:[],buses:[],groups:[],drawings:[],symmetrySets:[],collapseMode:'nodes',layoutOptions:{}};};
 
+function pinnedAttachment(n){
+ const p=n.fixedAnchorPosition;
+ return n.locked&&n.anchorId&&Number.isFinite(p?.x)&&Number.isFinite(p?.y)?p:null;
+}
 Core.anchorPositions=function(pg){
  const nodes=new Map(pg.nodes.map(n=>[n.id,n])),positions=new Map();
- const visit=(id,seen=new Set())=>{if(positions.has(id))return positions.get(id);const n=nodes.get(id);if(!n||seen.has(id))return {x:0,y:0};seen.add(id);const host=nodes.get(n.anchorId),p=host?visit(host.id,seen):null,result=p?{x:p.x+(n.anchorX||0),y:p.y+(n.anchorY||0)}:{x:n.x+(n.offsetX||0),y:n.y+(n.offsetY||0)};positions.set(id,result);return result;};
- for(const n of pg.nodes)visit(n.id);return positions;
+ function visit(id,seen=new Set()){
+  if(positions.has(id))return positions.get(id);
+  const n=nodes.get(id);
+  if(!n||seen.has(id))return {x:0,y:0};
+  seen.add(id);
+  const fixed=pinnedAttachment(n),host=nodes.get(n.anchorId);
+  const parent=!fixed&&host?visit(host.id,seen):null;
+  const position=fixed||(parent?{x:parent.x+(n.anchorX||0),y:parent.y+(n.anchorY||0)}:{x:n.x+(n.offsetX||0),y:n.y+(n.offsetY||0)});
+  positions.set(id,position);
+  return position;
+ }
+ for(const n of pg.nodes)visit(n.id);
+ return positions;
 };
+function writePosition(node,position){
+ node.x=position.x;node.y=position.y;node.offsetX=node.offsetY=0;
+}
+function rebaseAttachments(pg,targets,hosts){
+ for(const n of pg.nodes){
+  const target=targets.get(n.id),host=hosts.get(n.anchorId);
+  if(!target||!host)continue;
+  writePosition(n,target);
+  n.anchorX=target.x-host.x;n.anchorY=target.y-host.y;
+ }
+}
+function pinAttachments(pg,targets){
+ if(!targets.size)return;
+ for(const n of pg.nodes){
+  const position=targets.get(n.id);
+  if(!position)continue;
+  writePosition(n,position);
+  n.fixedAnchorPosition={x:position.x,y:position.y};
+ }
+}
 Core.preserveLockedAnchors=function(base,out){
- const before=Core.anchorPositions(base),desired=Core.anchorPositions({...out,nodes:out.nodes.map(n=>n.locked&&n.anchorId&&before.has(n.id)?{...n,...before.get(n.id),anchorId:null,offsetX:0,offsetY:0}:n)});
- for(const n of out.nodes)if(n.locked&&n.anchorId&&before.has(n.id)){const host=desired.get(n.anchorId),p=before.get(n.id);if(host){n.anchorX=p.x-host.x;n.anchorY=p.y-host.y;n.x=p.x;n.y=p.y;}}
+ const existing=new Set(base.nodes.filter(n=>n.locked&&n.anchorId).map(n=>n.id));
+ const kept=out.nodes.filter(n=>n.locked&&n.anchorId&&existing.has(n.id)&&!pinnedAttachment(n));
+ if(kept.length){
+  const before=Core.anchorPositions(base);
+  const targets=new Map(kept.map(n=>[n.id,before.get(n.id)]));
+  const hosts=Core.anchorPositions({nodes:out.nodes.map(n=>targets.has(n.id)?{id:n.id,...targets.get(n.id)}:n)});
+  rebaseAttachments(out,targets,hosts);
+ }
  return out;
 };
+const displayInputs=new WeakMap();
+function projectLike(pg,view){
+ return Core.display(pg,...(displayInputs.get(view)||[new Set(),false]));
+}
+function shownAnchorPositions(nodes,targets){
+ return Core.anchorPositions({nodes:nodes.map(n=>{
+  const target=targets.get(n.id);
+  if(target)return {id:n.id,x:target.x,y:target.y};
+  return {...n,anchorId:n.locked?null:n.anchorId,offsetX:0,offsetY:0};
+ })});
+}
+function releaseAttachments(base,out,reference,targets){
+ // An unchanged host uses the original relative anchor exactly. If the host
+ // moved, account for any additional packing caused by the new image extent.
+ for(let pass=0;pass<32;pass++){
+  const next=projectLike(out,reference),authored=Core.anchorPositions(out);
+  const shown=new Map(next.nodes.map(n=>[n.id,n]));
+  const changed=new Map([...targets].filter(([id,target])=>{
+   const actual=shown.get(id)||authored.get(id);
+   return Math.hypot(target.x-actual.x,target.y-actual.y)>.000001;
+  }));
+  if(!changed.size)return;
+  for(const [id,position] of shownAnchorPositions(next.nodes,targets))authored.set(id,position);
+  rebaseAttachments(out,changed,authored);
+  Core.preserveLockedAnchors(base,out);
+ }
+}
+function compactOffset(n){
+ const offset=n.legacyCompactOffset;
+ return Number.isFinite(offset?.x)&&Number.isFinite(offset?.y)?offset:{x:0,y:0};
+}
+function placeInLegacyCompactView(pg,reference,targets){
+ if(!targets.size)return;
+ // Group packing uses the authored envelope. Placement corrections apply
+ // after packing so they do not feed back into the origin of the group.
+ const shown=new Map(projectLike(pg,reference).nodes.map(n=>[n.id,n]));
+ for(const n of pg.nodes){
+  const target=targets.get(n.id),visible=shown.get(n.id);
+  if(!target||!visible)continue;
+  const offset=compactOffset(n),x=offset.x+target.x-visible.x,y=offset.y+target.y-visible.y;
+  if(Math.abs(x)<.001&&Math.abs(y)<.001)delete n.legacyCompactOffset;
+  else n.legacyCompactOffset={x,y};
+ }
+}
 {
  const display=Core.display,materialize=Core.materializeLayout,arrange=Core.arrange,layout=Core.autoLayout;
- Core.display=(pg,...args)=>{const d=display(pg,...args),positions=Core.anchorPositions(pg);for(const n of d.nodes)if(n.locked&&n.anchorId){const p=positions.get(n.id);if(p)Object.assign(n,p);}return d;};
- Core.materializeLayout=(pg,...args)=>Core.preserveLockedAnchors(pg,materialize(pg,...args));
+ Core.display=(pg,...args)=>{
+  const d=display(pg,...args);
+  displayInputs.set(d,args);
+  if(d.legacyCompact)for(const n of d.nodes)if(!n.anchorId&&n.legacyCompactOffset){
+   const offset=compactOffset(n);n.x+=offset.x;n.y+=offset.y;
+  }
+  const attachments=d.nodes.filter(n=>n.anchorId);
+  if(attachments.length){
+   const raw=Core.anchorPositions(pg);
+   const fixed=new Map(attachments.filter(n=>n.locked&&raw.has(n.id)).map(n=>[n.id,raw.get(n.id)]));
+   const positions=shownAnchorPositions(d.nodes,fixed);
+   for(const n of attachments)Object.assign(n,positions.get(n.id));
+  }
+  return d;
+ };
+ Core.materializeLayout=(pg,d,...args)=>{
+  const out=materialize(pg,d,...args);
+  if(d.legacyCompact){
+   const materialized=new Set(d.nodes.filter(n=>!n.locked&&!n.anchorId).map(n=>n.id));
+   for(const n of out.nodes)if(materialized.has(n.id))delete n.legacyCompactOffset;
+  }
+  return Core.preserveLockedAnchors(pg,out);
+ };
  Core.arrange=(pg,...args)=>Core.preserveLockedAnchors(pg,arrange(pg,...args));
  Core.autoLayout=(pg,...args)=>Core.preserveLockedAnchors(pg,layout(pg,...args));
 }
@@ -1747,12 +1874,82 @@ Core.editProtected=function(pg,item){return !!item?.editLocked||!!(item?.bus&&pg
 
 Core.rowProxyPort=function(pg,state,id,visible,side){const owner=state?.owners.get(id),node=owner?.row&&pg.nodes.find(n=>n.id===visible);return node&&Core.ports(node).find(p=>p.rowId===owner.row&&p.side===side)?.id||side;};
 Core.setNodeLocks=function(pg,ids,locked,view=null){
- const wanted=new Set(ids),targets=pg.nodes.filter(n=>wanted.has(n.id)&&!Core.editProtected(pg,n));
- if(!targets.some(n=>!!n.locked!==!!locked))return Core.clone(pg);
- const d=locked?(view||Core.display(pg,new Set(),false)):null,out=Core.clone(pg),shown=new Map(d?.nodes.map(n=>[n.id,n])||[]),before=Core.anchorPositions(pg),desired=new Map(targets.filter(n=>locked&&!n.locked).map(n=>[n.id,shown.get(n.id)||before.get(n.id)]));
- for(const n of out.nodes)if(!n.anchorId&&desired.has(n.id)){const v=desired.get(n.id);n.x=v.x;n.y=v.y;n.offsetX=n.offsetY=0;}
- if(locked)Core.preserveLockedAnchors(pg,out);
- const anchors=Core.anchorPositions({...out,nodes:out.nodes.map(n=>desired.has(n.id)?{...n,x:desired.get(n.id).x,y:desired.get(n.id).y,anchorId:null,offsetX:0,offsetY:0}:n)});
- for(const n of out.nodes)if(targets.some(t=>t.id===n.id)){const v=desired.get(n.id);if(v&&n.anchorId){const host=anchors.get(n.anchorId);n.x=v.x;n.y=v.y;n.offsetX=n.offsetY=0;if(host){n.anchorX=v.x-host.x;n.anchorY=v.y-host.y;}}n.locked=!!locked;}
+ const wanted=new Set(ids),out=Core.clone(pg);
+ const targets=out.nodes.filter(n=>wanted.has(n.id)&&!Core.editProtected(pg,n)&&!!n.locked!==!!locked);
+ if(!targets.length)return out;
+ const reference=view||projectLike(pg),shown=new Map(reference.nodes.map(n=>[n.id,n])),authored=Core.anchorPositions(pg);
+ const attachments=new Map(),compactTargets=new Map();
+ for(const n of targets){
+  const position=shown.get(n.id)||authored.get(n.id);
+  n.locked=!!locked;
+  if(n.anchorId){
+   attachments.set(n.id,position);
+   if(!locked)delete n.fixedAnchorPosition;
+  }
+  else if(reference.legacyCompact)compactTargets.set(n.id,position);
+  else if(locked)writePosition(n,position);
+ }
+ Core.preserveLockedAnchors(pg,out);
+ placeInLegacyCompactView(out,reference,compactTargets);
+ if(locked&&attachments.size){
+  pinAttachments(out,attachments);
+  Core.preserveLockedAnchors(pg,out);
+ }else if(attachments.size)releaseAttachments(pg,out,reference,attachments);
  return out;
+};
+
+// This projection belongs to the canvas. It never edits the page or its folds.
+Core.isolateCellBranch=function(pg,target,compact){
+ const hit=Core.cellTarget({pages:[pg]},target);
+ if(!hit)return null;
+ const {node:root,row,col,cell}=hit,table=root.table;
+ const span=cell.rowspan||1,rowIds=table.rowIds.slice(row,row+span),selectedRows=new Set(rowIds);
+ const rowPorts=Core.ports(root).filter(p=>selectedRows.has(p.rowId));
+ const portIds=new Set(rowPorts.map(p=>p.id));
+ const links=pg.edges.filter(e=>(e.source!==root.id||portIds.has(e.sourcePort))
+   &&(e.target!==root.id||portIds.has(e.targetPort)));
+ const children=new Map(pg.nodes.map(n=>[n.id,[]]));
+ for(const e of links){
+  const relationship=Core.edgeRelationship(pg,e);
+  if(relationship)children.get(relationship.parent).push(relationship);
+ }
+ for(const n of pg.nodes)if(n.anchorId!==root.id&&children.has(n.anchorId)){
+  children.get(n.anchorId).push({child:n.id,annotation:false});
+ }
+ const reached=new Set([root.id]),queue=[root.id],annotations=new Set();
+ for(let i=0;i<queue.length;i++)for(const link of children.get(queue[i])){
+  if(link.annotation)annotations.add(link.child);
+  else if(!reached.has(link.child)){reached.add(link.child);queue.push(link.child);}
+ }
+ for(const id of annotations)reached.add(id);
+
+ // Derive positions from the full expanded page so unrelated visibility
+ // changes cannot rearrange the branch or affect the editor's coordinates.
+ const display=Core.display(pg,new Set(),compact),tableView=display.nodes.find(n=>n.id===root.id);
+ if(!tableView)return null;
+ const metrics=Core.tableMetrics(tableView);
+ const sum=values=>values.reduce((total,value)=>total+value,0);
+ const widthScale=(tableView.w-3)/sum(metrics.widths);
+ const width=Math.max(32,sum(metrics.widths.slice(col,col+(cell.colspan||1)))*widthScale);
+ const isolated={
+  ...tableView,
+  x:tableView.x+sum(metrics.widths.slice(0,col))*widthScale,
+  y:tableView.y+sum(metrics.heights.slice(0,row)),
+  w:width+3,icons:[],materials:[],ports:rowPorts,
+  table:{
+   cells:[[{...cell,colspan:1}],...rowIds.slice(1).map(()=>[null])],
+   widths:[width],heights:metrics.heights.slice(row,row+span),
+   rowIds,colIds:[table.colIds[col]],wordWrap:table.wordWrap
+  }
+ };
+ isolated.h=Core.tableMetrics(isolated).total;
+ const nodes=display.nodes.filter(n=>reached.has(n.id)).map(n=>n.id===root.id?isolated:n);
+ const visible=new Set(nodes.map(n=>n.id)),linkIds=new Set(links.map(e=>e.id));
+ let edges=display.edges.filter(e=>linkIds.has(e.id)&&visible.has(e.source)&&visible.has(e.target));
+ const busCounts=new Map();
+ for(const e of edges)if(e.bus)busCounts.set(e.bus,(busCounts.get(e.bus)||0)+1);
+ const buses=display.buses.filter(b=>busCounts.get(b.id)>=2),busIds=new Set(buses.map(b=>b.id));
+ edges=edges.map(e=>e.bus&&!busIds.has(e.bus)?{...e,bus:undefined}:e);
+ const drawings=(pg.drawings||[]).filter(d=>d.anchor!==root.id&&visible.has(d.anchor));
+ return {nodes,edges,buses,frames:[],drawings};
 };

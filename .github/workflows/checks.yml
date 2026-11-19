@@ -47,5 +47,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Pipeline-Studio-Windows-x64
-          path: desktop/dist/Pipeline-Studio-*-x64.exe
+          path: |
+            desktop/dist/Pipeline-Studio-*-x64.exe
+            qa/portable-payload.json
           if-no-files-found: error

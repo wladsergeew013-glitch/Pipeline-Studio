@@ -51,12 +51,12 @@ def commit_materials(materials):
     commit_state(p,materials)
     return p['revision']
 
-def discard_uncommitted_upload(target):
+def discard_uncommitted_asset(target):
     # A commit can have succeeded even if its caller raised before returning.
     # Only remove this request's blob when the authoritative state proves it unused.
     try:state=load(DATA/'state.json')
     except (OSError,ValueError):return
-    if state is None:return
+    if not isinstance(state,dict) or not isinstance(state.get('project'),dict) or not isinstance(state.get('materials'),list):return
     pending=[state]
     while pending:
         value=pending.pop()
@@ -64,7 +64,8 @@ def discard_uncommitted_upload(target):
             if value.get('asset')==target.name or value.get('previewAsset')==target.name:return
             pending.extend(item for item in value.values() if isinstance(item,(dict,list)))
         elif isinstance(value,list):pending.extend(item for item in value if isinstance(item,(dict,list)))
-    target.unlink(missing_ok=True)
+    try:target.unlink(missing_ok=True)
+    except OSError:pass
 
 def initialize():
     with LOCK:
@@ -429,8 +430,7 @@ class Handler(BaseHTTPRequestHandler):
                         else:mats.append(mat)
                         revision=commit_materials(mats)
                     except Exception:
-                        try:discard_uncommitted_upload(target)
-                        except OSError:pass
+                        discard_uncommitted_asset(target)
                         raise
                 return self.json({**wire_materials([mat])[0],'projectRevision':revision})
             if path.startswith('/api/preview/'):
@@ -459,9 +459,18 @@ class Handler(BaseHTTPRequestHandler):
                         mats=load(DATA/'materials.json',[]);current=next((m for m in mats if m['id']==mid),None)
                         if load(DATA/'project.json')['revision']!=source_revision:raise Conflict('Проект изменён во время конвертации. Повторите создание превью.')
                         if not current or current.get('asset')!=source_asset or current.get('version',1)!=source_version:return self.json({'error':'Оригинал изменён во время конвертации. Повторите создание превью.'},409)
-                        preview=uuid.uuid4().hex+'-preview';target=asset_path(preview);shutil.copyfile(pdf,target)
-                        current['previewAsset']=preview;current['version']=source_version+1;mat=current
-                        revision=commit_materials(mats)
+                        preview=uuid.uuid4().hex+'-preview';target=asset_path(preview)
+                        created=False
+                        try:
+                            with target.open('xb') as output:
+                                created=True
+                                with pdf.open('rb') as input_pdf:
+                                    shutil.copyfileobj(input_pdf,output)
+                            current['previewAsset']=preview;current['version']=source_version+1;mat=current
+                            revision=commit_materials(mats)
+                        except Exception:
+                            if created:discard_uncommitted_asset(target)
+                            raise
                 return self.json({**wire_materials([mat])[0],'projectRevision':revision})
             if path=='/api/publish':
                 with LOCK:

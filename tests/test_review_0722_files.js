@@ -15,7 +15,17 @@ test('V21-15 Save As replaces an explicitly chosen oversized destination with a 
 test('R21-01 native PDF preview verifies the signature as well as the MIME extension',()=>fixture(async(bridge,file)=>{
  for(const [name,bytes,valid] of [['valid.pdf','%PDF-1.4\nsynthetic',true],['disguised.pdf','<html><script>bad()</script></html>',false],['active.html','%PDF-1.4\n<html>bad</html>',false]]){
   const source=path.join(path.dirname(file),name);fs.writeFileSync(source,bytes);
-  if(valid){const info=await bridge.command('stat',{nativePath:source,pdf:true});assert.equal(info.mime,'application/pdf');assert.equal(info.pdf,true);assert.equal((await bridge.pdfSource(info.pdfURL)).nativePath,source);const forged=new URL(info.pdfURL);forged.searchParams.set('key','bad');await assert.rejects(()=>bridge.pdfSource(forged.href));fs.writeFileSync(source,'<html>replaced after stat</html>');await assert.rejects(()=>bridge.pdfSource(info.pdfURL),/PDF/)}else await assert.rejects(()=>bridge.command('stat',{nativePath:source,pdf:true}),/PDF/);
+  if(valid){
+   const info=await bridge.command('stat',{nativePath:source,pdf:true});
+   assert.equal(info.mime,'application/pdf');assert.equal(info.pdf,true);
+   const pdf=await bridge.pdfSource(info.pdfURL);
+   try{
+    assert.equal(pdf.nativePath,source);assert.equal(pdf.size,Buffer.byteLength(bytes));
+    assert.equal(await pdf.handle.readFile('utf8'),bytes);
+   }finally{await pdf.handle.close();}
+   const forged=new URL(info.pdfURL);forged.searchParams.set('key','bad');await assert.rejects(()=>bridge.pdfSource(forged.href));
+   fs.writeFileSync(source,'<html>replaced after stat</html>');await assert.rejects(()=>bridge.pdfSource(info.pdfURL),/PDF/);
+  }else await assert.rejects(()=>bridge.command('stat',{nativePath:source,pdf:true}),/PDF/);
   assert.equal((await bridge.command('stat',{nativePath:source})).state,'ok');
  }
 }));

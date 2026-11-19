@@ -4,6 +4,8 @@ const path = require('node:path');
 const net = require('node:net');
 const os = require('node:os');
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
+const { fileURLToPath } = require('node:url');
 const { spawn, execFileSync } = require('node:child_process');
 const { playwright } = require('./browser_runtime');
 const root = path.resolve(__dirname, '..');
@@ -23,6 +25,27 @@ const exe = path.join(delivery, path.basename(original));
 fs.copyFileSync(original, exe);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const results = [];
+const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+const payloadFiles = new Map([
+  ['main.cjs', 'desktop/main.cjs'],
+  ['preload.cjs', 'desktop/preload.cjs'],
+  ['file-bridge.cjs', 'desktop/file-bridge.cjs'],
+  ['editor-origin.cjs', 'desktop/editor-origin.cjs'],
+  ['ui/Pipeline-Studio.html', 'Pipeline-Studio.html'],
+]);
+
+function verifyPortablePayload(uiURL) {
+  const { extractFile } = require('../desktop/node_modules/@electron/asar');
+  const archive = path.dirname(path.dirname(fileURLToPath(uiURL)));
+  assert.equal(path.basename(archive), 'app.asar');
+  const payload = {};
+  for (const [entry, source] of payloadFiles) {
+    const bytes = extractFile(archive, entry);
+    assert(bytes.equals(fs.readFileSync(path.join(root, source))), 'Packaged source differs: ' + source);
+    payload[entry] = hash(bytes);
+  }
+  return { appAsarSha256: hash(fs.readFileSync(archive)), payload };
+}
 
 async function freePort() {
   const server = net.createServer();
@@ -95,6 +118,7 @@ async function runCase(label, lowerDrive = false) {
     const startup = JSON.parse(fs.readFileSync(report, 'utf8'));
     result.expectedURL = startup.uiURL;
     assert.equal(startup.version, version);
+    if (!diagnose) result.bundle = verifyPortablePayload(startup.uiURL);
     browser = await playwright.chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`, { timeout: 10000 });
     const page = browser.contexts().flatMap(context => context.pages()).find(page => page.url().startsWith('file:'));
     assert(page);
@@ -143,6 +167,14 @@ async function runCase(label, lowerDrive = false) {
   await runCase('Профиль коллеги');
   await runCase('Профиль коллеги lowercase', true);
   await runCase("Профиль O'Connor # 100% тест");
+  if (!diagnose) {
+    for (const result of results) assert.deepEqual(result.bundle, results[0].bundle);
+    const exeSha256 = hash(fs.readFileSync(exe));
+    assert.equal(exeSha256, hash(fs.readFileSync(original)));
+    fs.writeFileSync(path.join(root, 'qa', 'portable-payload.json'),
+      JSON.stringify({version, exeSha256, ...results[0].bundle, testedLaunches: results.length}, null, 2) + '\n');
+    console.log('PASS All 5 files in the portable EXE app.asar match checkout bytes');
+  }
   fs.writeFileSync(path.join(root, 'qa', diagnose ? 'portable-transfer-before.json' : 'portable-transfer.json'), JSON.stringify({ version, fixture, runtimeFixture, results }, null, 2));
   console.log('TOTAL', results.length);
 })().catch(error => { console.error(error); process.exitCode = 1; });
