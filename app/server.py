@@ -125,11 +125,43 @@ def check_materials(mats):
             if value is not None and value!='':asset_path(value)
     return mats
 
+def check_runs(obj):
+    if 'runs' not in obj:
+        return
+    runs=obj['runs']
+    if not isinstance(runs,list) or len(runs)>200:
+        raise ValueError('Некорректный список прогонов')
+
+    def valid_id(value):
+        return isinstance(value,str) and 0<len(value)<=200
+
+    ids=set()
+    for run in runs:
+        if not isinstance(run,dict) or not all(valid_id(run.get(k)) for k in ('id','pageId','startNodeId')):
+            raise ValueError('Некорректный прогон')
+        title,steps=run.get('title'),run.get('steps')
+        if (run['id'] in ids or not isinstance(title,str) or not title.strip() or len(title)>120 or
+                not isinstance(steps,list) or not 0<len(steps)<=512):
+            raise ValueError('Некорректный прогон')
+        ids.add(run['id'])
+        for step in steps:
+            if not isinstance(step,list) or not 0<len(step)<=32:
+                raise ValueError('Некорректный шаг прогона')
+            unique=set()
+            for leg in step:
+                if not isinstance(leg,dict) or not all(valid_id(leg.get(k)) for k in ('from','edgeId')):
+                    raise ValueError('Некорректный переход прогона')
+                key=(leg['from'],leg['edgeId'])
+                if key in unique:
+                    raise ValueError('Повтор перехода в шаге прогона')
+                unique.add(key)
+
 def check_project(obj):
     if not isinstance(obj,dict) or obj.get('format')!='pipeline-studio':raise ValueError('Неизвестный формат проекта')
     if obj.get('materials') is not None:check_materials(obj['materials'])
     if not isinstance(obj.get('pages'),list) or not obj['pages']:raise ValueError('Нужна хотя бы одна страница')
     check_presentation(obj)
+    check_runs(obj)
     ids=set()
     for p in obj['pages']:
         if p['id'] in ids:raise ValueError('Повтор ID страницы')

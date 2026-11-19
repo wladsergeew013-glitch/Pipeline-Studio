@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, parse_qs, quote
 
 BASE=Path(__file__).resolve().parents[1]
-EXTENSIONS=set('.pdf .doc .docx .odt .rtf .ppt .pptx .odp .xls .xlsx .ods .csv .txt .png .jpg .jpeg .gif .webp .svg .mp4 .webm .mov .mkv .mp3 .wav .ogg .html .htm .json .zip'.split())
+EXTENSIONS=set('.pdf .doc .docx .odt .rtf .ppt .pptx .odp .xls .xlsx .ods .csv .txt .png .jpg .jpeg .gif .webp .svg .mp4 .webm .mov .mkv .mp3 .wav .ogg .html .htm .xml .json .zip'.split())
 
 def file_digest(path):
     digest=hashlib.sha256()
@@ -27,8 +27,9 @@ def pick_file(document=False,save=False,name=''):
     ctypes.windll.user32.GetForegroundWindow.restype=wintypes.HWND
     spec=OPENFILENAME();spec.lStructSize=ctypes.sizeof(spec);spec.hwndOwner=ctypes.windll.user32.GetForegroundWindow();spec.lpstrFile=ctypes.cast(buf,wintypes.LPWSTR);spec.nMaxFile=len(buf);spec.nFilterIndex=1
     spec.lpstrTitle='Сохранить документ Pipeline Studio' if save else 'Открыть документ Pipeline Studio' if document else 'Выбрать исходный файл'
-    spec.lpstrFilter='Документ Pipeline Studio\0*.html;*.htm\0\0' if save else 'Документ Pipeline Studio\0*.html;*.htm;*.json\0\0' if document else 'Материалы\0'+';'.join('*'+e for e in sorted(EXTENSIONS))+'\0Все файлы\0*.*\0\0'
-    spec.Flags=0x00080000|0x00000008|0x00000800|(0x00000002 if save else 0x00001000);spec.lpstrDefExt='html' if save else None
+    spec.lpstrFilter='Документ Pipeline Studio\0*.html;*.htm;*.xml\0\0' if save else 'Документ Pipeline Studio\0*.html;*.htm;*.xml;*.json\0\0' if document else 'Материалы\0'+';'.join('*'+e for e in sorted(EXTENSIONS))+'\0Все файлы\0*.*\0\0'
+    spec.Flags=0x00080000|0x00000008|0x00000800|(0x00000002 if save else 0x00001000)
+    spec.lpstrDefExt=('xml' if name.lower().endswith('.xml') else 'html') if save else None
     api=ctypes.windll.comdlg32.GetSaveFileNameW if save else ctypes.windll.comdlg32.GetOpenFileNameW
     api.argtypes=[ctypes.POINTER(OPENFILENAME)];api.restype=wintypes.BOOL
     if not api(ctypes.byref(spec)):
@@ -102,7 +103,7 @@ class LocalFiles:
             with self.dialog_lock:p=self.picker(document=route!='pick',save=route=='pick-save',name=data.get('name','') if route=='pick-save' else '')
             if p is None:return {'cancelled':True}
             p=self.remember(p,document=route!='pick')
-            if route=='pick-save' and p.suffix.lower() not in ('.html','.htm'):raise ValueError('Сохраните документ как HTML')
+            if route=='pick-save' and p.suffix.lower() not in ('.html','.htm','.xml'):raise ValueError('Сохраните документ как HTML или XML')
             info=self.metadata(p,document=route=='pick-document')
             if route=='pick-save' and info['state']=='ok':info['digest']=file_digest(p)
             info['openKey']=self.open_key(p)
@@ -124,12 +125,15 @@ class LocalFiles:
             if not p.is_file():raise FileNotFoundError('Исходный файл перемещён или удалён: '+str(p))
             self.opener(p,folder=route=='folder');return {'opened':True,'nativePath':str(p)}
         if route=='save':
-            if str(p) not in self.grants or p.suffix.lower() not in ('.html','.htm'):raise PermissionError('Сначала выберите HTML для сохранения')
+            if str(p) not in self.grants or p.suffix.lower() not in ('.html','.htm','.xml'):raise PermissionError('Сначала выберите HTML или XML для сохранения')
             text=data.get('text','')
-            if not isinstance(text,str) or 'id="pipeline-document"' not in text:raise ValueError('Нужен HTML документа Studio')
+            xml=p.suffix.lower()=='.xml'
+            if (not isinstance(text,str) or 'id="pipeline-document"' not in text or
+                    xml!=text.startswith('<?xml ') or (xml and 'data-pipeline-studio="1"' not in text)):
+                raise ValueError('Нужен документ Studio выбранного формата')
             if len(text.encode('utf8'))>40*1024*1024:raise ValueError('Документ превышает 40 МБ')
             with self.lock:
-                if p.exists() and file_digest(p)!=data.get('digest'):raise FileExistsError('Исходный HTML изменён другим процессом. Используйте «Сохранить как».')
+                if p.exists() and file_digest(p)!=data.get('digest'):raise FileExistsError('Файл изменён другим процессом. Используйте «Сохранить как».')
                 temp=p.with_name(p.name+'.studio-'+secrets.token_hex(5)+'.tmp')
                 try:temp.write_text(text,encoding='utf-8',newline='\n');os.replace(temp,p)
                 finally:temp.unlink(missing_ok=True)

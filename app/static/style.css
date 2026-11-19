@@ -318,3 +318,71 @@ body{-webkit-user-select:none;user-select:none}input,textarea,[contenteditable="
 .branch-focused #stage:active,.branch-focused #stage:active .node{cursor:grabbing}
 .branch-focused .branch-start{outline:2px solid var(--accent);outline-offset:3px}
 @media(max-width:760px){.branch-focus-label{display:none}}
+
+.sheet-strip{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:7px 15px;border-bottom:1px solid #dfe7f1;background:#fbfdff;min-width:0;flex:none}
+#sheet-bar{display:flex;gap:5px;min-width:0;overflow-x:auto;scrollbar-width:thin}
+#sheet-bar button{flex:none;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:transparent;border:1px solid transparent;color:#50647c;padding:6px 12px;border-radius:8px;font-weight:600;min-height:32px}
+#sheet-bar button:hover,#sheet-bar button:focus-visible{background:#edf4f9}
+#sheet-bar [aria-current=page]{background:#edf2ff;color:#3d52a2;border-color:#d9e2fe}
+#show-runs{display:flex;align-items:center;gap:7px;white-space:nowrap;background:#e6f5f3;border:1px solid #c7e7e1;color:#1b655f;font-weight:700;padding:6px 11px;border-radius:8px;min-height:33px;flex:none}
+#show-runs[aria-expanded=true]{color:#fff;background:#1d625e;border-color:#1d625e}
+#show-runs[hidden],#run-panel[hidden],#inspector[hidden]{display:none}
+.run-count{display:inline-flex;align-items:center;justify-content:center;min-width:18px;padding:2px 5px;border-radius:7px;background:#ffffff40;font-size:10px}
+.branch-focused .sheet-strip{display:none}
+
+#run-panel{flex:1;min-height:0;overflow:auto;scrollbar-width:thin;padding:14px;background:#f8fbfd}
+.run-player{padding:15px;border-radius:15px;color:#fff;background:radial-gradient(ellipse at right top,#276967 0%,transparent 63%),linear-gradient(135deg,#142e43,#194857);box-shadow:0 8px 23px #142e4324}
+.run-status{color:#b8dfdc;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
+.run-player progress{display:block;width:100%;height:5px;margin:10px 0 13px;border:0;border-radius:9px;overflow:hidden;appearance:none;accent-color:#6df0cd;background:#ffffff29}
+.run-player progress::-webkit-progress-bar{background:#ffffff29;border-radius:9px}
+.run-player progress::-webkit-progress-value{background:#7af2d1;border-radius:9px}
+.run-stage-title{display:block;font-size:17px;line-height:1.28;overflow-wrap:anywhere}
+.run-stage-detail{margin:6px 0 13px;color:#c3dce1;font-size:12px;line-height:1.4;min-height:16px;overflow-wrap:anywhere}
+.run-controls{display:flex;gap:6px;align-items:stretch}
+.run-controls button{border:1px solid transparent;border-radius:8px;min-height:36px;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-weight:700}
+.run-controls .run-primary{flex:1;background:#99f3d8;color:#124b44}
+.run-controls .run-primary:hover:not(:disabled){background:#bbfae9}
+.run-controls .run-icon{padding:6px;width:36px;background:#ffffff12;color:#fff;border-color:#ffffff36}
+.run-controls .run-icon:hover:not(:disabled){background:#ffffff27}
+.run-controls button:disabled{opacity:.42;cursor:default}
+.run-settings{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:12px 0 14px;color:#3d576b;font-size:12px}
+.run-settings label{display:flex;align-items:center;gap:6px}
+.run-settings input{accent-color:#227468}
+.run-settings select{min-height:29px;width:auto;padding:3px 8px;background:#fff}
+.run-list{display:grid;gap:7px;margin-bottom:12px}
+#run-panel .run-option{display:flex;align-items:center;gap:9px;text-align:left;padding:8px 9px;min-width:0;border-radius:9px;background:#fff;border:1px solid #dce6ed;color:#18394d}
+.run-option .ui-icon{color:#318378;flex:none}
+.run-option>span{min-width:0}
+.run-option strong,.run-option small{display:block;line-height:1.35;white-space:normal;overflow-wrap:anywhere}
+.run-option small{color:#597386;font-size:11px;margin-top:1px}
+#run-panel .run-option[aria-pressed=true]{border-color:#78bcad;background:#eaf8f5}
+#run-panel .run-option:hover{border-color:#78bcad}
+.run-edit-actions{display:flex;gap:6px;margin:5px 0 10px}
+.run-edit-actions button{flex:1;font-size:11px;min-height:31px}
+.run-edit-actions .run-delete{color:#974549;flex:none}
+.run-new{width:100%;color:#245d70;border:1px dashed #94b8c8;background:#f1f8fc;font-weight:650}
+.run-empty{color:#546a7c;line-height:1.5}
+
+#run-overlay{position:absolute;z-index:5;left:0;top:0;width:1px;height:1px;overflow:visible;pointer-events:none}
+.run-flight,.run-trace{fill:none;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+.run-trace{stroke:#1b986f;stroke-width:3;opacity:.68}
+.run-flight{stroke:#19b7a1;stroke-width:3.5;filter:drop-shadow(0 0 3px #4addc77d)}
+.run-marker{fill:#fffbdf;stroke:#008876;stroke-width:2;filter:drop-shadow(0 0 5px #1fdbc8)}
+.node.run-visited:not(.decision):not(.comment){box-shadow:0 0 0 2px #2de0ae67}
+.node.run-current:not(.decision):not(.comment){box-shadow:0 0 0 2px #009d86,0 0 22px #4dddc799}
+.run-current .diamond-shape polygon,.run-current .comment-shape path{stroke:#008d7c;stroke-width:2.5;filter:drop-shadow(0 0 5px #5ae6cf)}
+
+.run-editor{display:grid;gap:12px}
+.run-editor-steps{max-height:178px;overflow:auto;margin:10px 0;padding:5px 6px 5px 29px;border-radius:9px;background:#f0f7fa}
+.run-editor-steps li{padding:3px 4px;color:#26475d}
+.run-editor-steps li button{vertical-align:middle;min-height:25px;margin-left:8px;padding:2px 7px}
+.run-choice-field{border:1px solid #d7e5ed;border-radius:10px;padding:10px 12px;margin:10px 0 0;min-width:0}
+.run-choice-field legend{color:#2a5667;font-weight:650;padding:0 4px}
+.run-choice-field p{margin:0 0 8px;color:#567186;font-size:12px}
+.run-choices{display:grid;gap:6px;max-height:202px;overflow:auto;margin:0 0 9px}
+.run-choices label{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:7px;background:#f1f8f9;color:#21485b;cursor:pointer}
+.run-choices label:has(input:checked){background:#e3f5ef}
+.run-choices input{accent-color:#23796a}
+.run-choices small{display:block;color:#527084}
+.run-editor-alert{padding:9px;border-radius:7px;background:#fff4dd;color:#674e1b}
+@media(max-width:650px){.sheet-strip{gap:7px;padding-inline:8px}#sheet-bar button{max-width:145px;padding-inline:8px}#show-runs{padding-inline:7px}}

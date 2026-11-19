@@ -1,6 +1,6 @@
 'use strict';
 const fs=require('node:fs'),fsp=fs.promises,path=require('node:path'),crypto=require('node:crypto'),{pathToFileURL}=require('node:url');
-const EXTENSIONS=new Set('.pdf .doc .docx .odt .rtf .ppt .pptx .odp .xls .xlsx .ods .csv .txt .png .jpg .jpeg .gif .webp .svg .mp4 .webm .mov .mkv .mp3 .wav .ogg .html .htm .json .zip'.split(' '));
+const EXTENSIONS=new Set('.pdf .doc .docx .odt .rtf .ppt .pptx .odp .xls .xlsx .ods .csv .txt .png .jpg .jpeg .gif .webp .svg .mp4 .webm .mov .mkv .mp3 .wav .ogg .html .htm .xml .json .zip'.split(' '));
 const MIME={pdf:'application/pdf',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',webp:'image/webp',svg:'image/svg+xml',webm:'video/webm',mp4:'video/mp4',mp3:'audio/mpeg',wav:'audio/wav',ogg:'audio/ogg',html:'text/html',htm:'text/html',json:'application/json',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation'};
 const canonical=p=>{p=path.resolve(p);try{return fs.realpathSync(p)}catch{return p}},key=p=>canonical(p).toLowerCase(),inside=(p,folder)=>{const rel=path.relative(key(folder),key(p));return !path.isAbsolute(rel)&&rel!=='..'&&!rel.startsWith('..'+path.sep)},digest=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 async function fileDigest(p){const hash=crypto.createHash('sha256');for await(const chunk of fs.createReadStream(p))hash.update(chunk);return hash.digest('hex');}
@@ -39,13 +39,26 @@ class FileBridge {
  async openURI(raw){const u=new URL(raw);if(u.protocol!=='pipelinestudio:'||u.hostname!=='open')throw Error('Некорректная ссылка Studio');const p=this.resolve({nativePath:u.searchParams.get('path')}),given=u.searchParams.get('key')||'',expected=this.signature(p);if(given.length!==expected.length||!crypto.timingSafeEqual(Buffer.from(given),Buffer.from(expected)))throw Error('Ссылка не принадлежит этой Studio. Откройте HTML в приложении и замените источник.');const action=u.searchParams.get('action')||'open';if(!['open','folder'].includes(action))throw Error('Неизвестная команда ссылки Studio');return this.command(action,{nativePath:p});}
  async command(route,data={}){
   if(!data||typeof data!=='object'||Array.isArray(data))throw Error('Некорректная команда');
-  if(['pick','pick-document','pick-save'].includes(route)){const chosen=await this.picker(route,data);if(!chosen)return {cancelled:true};if(route==='pick-save'&&!/\.html?$/i.test(chosen))throw Error('Сохраните документ как HTML');const p=this.remember(chosen,route!=='pick'),info=await this.metadata(p,route==='pick-document');if(route==='pick-save'&&info.state==='ok')info.digest=await fileDigest(p);info.openURL=this.openURL(p);if(data.documentPath){const relative=path.relative(path.dirname(data.documentPath),p);info.path=path.isAbsolute(relative)?'':relative.replaceAll('\\','/');}return info;}
+  if(['pick','pick-document','pick-save'].includes(route)){const chosen=await this.picker(route,data);if(!chosen)return {cancelled:true};if(route==='pick-save'&&!/\.(html?|xml)$/i.test(chosen))throw Error('Сохраните документ как HTML или XML');const p=this.remember(chosen,route!=='pick'),info=await this.metadata(p,route==='pick-document');if(route==='pick-save'&&info.state==='ok')info.digest=await fileDigest(p);info.openURL=this.openURL(p);if(data.documentPath){const relative=path.relative(path.dirname(data.documentPath),p);info.path=path.isAbsolute(relative)?'':relative.replaceAll('\\','/');}return info;}
   const p=this.resolve(data);
   if(route==='stat'){const info=await this.metadata(p);if(data.pdf&&info.state==='ok'){const handle=await fsp.open(p,'r');try{await verifyPDF(handle,p)}finally{await handle.close()}info.pdf=true;info.pdfURL=this.pdfURL(p);}return info;}
   if(route==='link')return {nativePath:p,openURL:this.openURL(p)};
-  if(route==='read-document'){if(!/\.(html?|json)$/i.test(p))throw Error('Нужен HTML или JSON Studio');const stat=await fsp.stat(p);if(stat.size>40*1024*1024)throw Error('Документ слишком большой');return {text:await fsp.readFile(p,'utf8')};}
+  if(route==='read-document'){if(!/\.(html?|xml|json)$/i.test(p))throw Error('Нужен HTML, XML или JSON Studio');const stat=await fsp.stat(p);if(stat.size>40*1024*1024)throw Error('Документ слишком большой');return {text:await fsp.readFile(p,'utf8')};}
   if(route==='open'||route==='folder'){const info=await this.metadata(p);if(info.state!=='ok')throw Error(info.detail);await this.opener(p,route==='folder');return {opened:true,nativePath:p};}
-  if(route==='save'){const run=async()=>{if(!this.grants.has(key(p))||!/\.html?$/i.test(p))throw Error('Сначала выберите HTML для сохранения');if(typeof data.text==='string'&&Buffer.byteLength(data.text,'utf8')>40*1024*1024)throw Error('Документ превышает 40 МБ');if(typeof data.text!=='string'||!data.text.includes('id="pipeline-document"'))throw Error('Нужен HTML документа Studio');if(fs.existsSync(p)&&await fileDigest(p)!==data.digest)throw Error('HTML изменён другим процессом. Используйте «Сохранить как».');const temp=p+'.studio-'+crypto.randomBytes(5).toString('hex')+'.tmp';try{await fsp.writeFile(temp,data.text,'utf8');await fsp.rename(temp,p)}finally{await fsp.unlink(temp).catch(()=>{})}return {...await this.metadata(p),digest:digest(Buffer.from(data.text,'utf8')),size:Buffer.byteLength(data.text,'utf8')};};const job=this.saveQueue.then(run,run);this.saveQueue=job.catch(()=>{});return job;}
+  if(route==='save'){
+   const run=async()=>{
+    if(!this.grants.has(key(p))||!/\.(html?|xml)$/i.test(p))throw Error('Сначала выберите HTML или XML для сохранения');
+    const text=data.text,xml=/\.xml$/i.test(p);
+    if(typeof text==='string'&&Buffer.byteLength(text,'utf8')>40*1024*1024)throw Error('Документ превышает 40 МБ');
+    if(typeof text!=='string'||!text.includes('id="pipeline-document"')||
+       xml!==text.startsWith('<?xml ')||(xml&&!text.includes('data-pipeline-studio="1"')))throw Error('Нужен документ Studio выбранного формата');
+    if(fs.existsSync(p)&&await fileDigest(p)!==data.digest)throw Error('Файл изменён другим процессом. Используйте «Сохранить как».');
+    const temp=p+'.studio-'+crypto.randomBytes(5).toString('hex')+'.tmp';
+    try{await fsp.writeFile(temp,text,'utf8');await fsp.rename(temp,p)}finally{await fsp.unlink(temp).catch(()=>{})}
+    return {...await this.metadata(p),digest:digest(Buffer.from(text,'utf8')),size:Buffer.byteLength(text,'utf8')};
+   };
+   const job=this.saveQueue.then(run,run);this.saveQueue=job.catch(()=>{});return job;
+  }
   throw Error('Неизвестная команда');
  }
 }

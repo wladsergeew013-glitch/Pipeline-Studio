@@ -25,7 +25,7 @@ const dataURL=blob=>new Promise((res,rej)=>{const f=new FileReader();f.onload=()
 function dataBlob(url){const [meta,s]=url.split(',');const str=atob(s),buf=new Uint8Array(str.length);for(let i=0;i<str.length;i++)buf[i]=str.charCodeAt(i);return new Blob([buf],{type:meta.match(/^data:([^;]+)/)?.[1]||'application/octet-stream'});}
 function legacyCheckpoint(){if(S.readOnly)return;S.history.push(C.clone(S.project));if(S.history.length>50)S.history.shift();S.redo=[];}
 function change(fn){
- if(S.readOnly)return;const before=historySnapshot(),view=S.project.viewState,hasView=Object.hasOwn(S.project,'viewState'),selection={pageIndex:S.pageIndex,selected:new Set(S.selected),selectedEdges:new Set(S.selectedEdges),selectedDrawings:new Set(S.selectedDrawings||[]),selectedBuses:new Set(S.selectedBuses||[]),selectedEdge:S.selectedEdge,selectedBus:S.selectedBus,selectedDrawing:S.selectedDrawing};
+ if(S.readOnly)return;clearRunPlayback();const before=historySnapshot(),view=S.project.viewState,hasView=Object.hasOwn(S.project,'viewState'),selection={pageIndex:S.pageIndex,selected:new Set(S.selected),selectedEdges:new Set(S.selectedEdges),selectedDrawings:new Set(S.selectedDrawings||[]),selectedBuses:new Set(S.selectedBuses||[]),selectedEdge:S.selectedEdge,selectedBus:S.selectedBus,selectedDrawing:S.selectedDrawing};
  try{fn();C.validatePresentation(S.project);for(const pg of before.pages){const next=S.project.pages.find(p=>p.id===pg.id);if(next)C.assertProtectedMembership(pg,next);}}
  catch(err){S.project=before;if(hasView)S.project.viewState=view;else delete S.project.viewState;Object.assign(S,selection);render();throw err;}
  S.history.push(before);if(S.history.length>80)S.history.shift();S.redo=[];changed();render();
@@ -507,7 +507,7 @@ function legacyBulkRelink(){
 
 /* 0.3: The editor is an application. A document and its referenced files are separate.
    All filesystem access is explicitly granted by the user; imported HTML is parsed, never run. */
-const RELEASE='0.7.22';
+const RELEASE='0.7.23';
 function desktopAvailable(){return typeof window.STUDIO_DESKTOP?.call==='function';}
 function nativeAvailable(){return desktopAvailable()||!!window.STUDIO_NATIVE?.token&&location.hostname==='127.0.0.1';}
 async function nativeCall(route,data={}){if(desktopAvailable())return window.STUDIO_DESKTOP.call(route,data);if(!nativeAvailable())throw Error('Открытие оригинала доступно в Pipeline Studio.exe');const response=await fetch('/native/'+route,{method:'POST',headers:{'Content-Type':'application/json','X-Studio-Token':window.STUDIO_NATIVE.token},body:JSON.stringify(data),cache:'no-store'});const result=await response.json();if(!response.ok)throw Error(result.error||'Не удалось обратиться к исходному файлу');return result;}
@@ -548,6 +548,7 @@ function serverSnapshot(doc){
 }
 function switchPage(index){
  if(!Number.isInteger(index)||!S.project?.pages[index])throw Error('Страница не найдена');
+ clearRunPlayback();
  commitActiveEditors();resetBranchFocus();S.pendingPort=S.addingBus=S.addingBusPair=null;S.drag=null;S.connectionCycle=null;S.selectedSegment=null;stopPlacement();
  S.selected.clear();S.selectedEdges.clear();S.selectedDrawings?.clear();S.selectedBuses?.clear();S.selectedEdge=S.selectedBus=S.selectedDrawing=null;S.search='';S.pageIndex=index;
 }
@@ -596,13 +597,16 @@ async function activateDocument(project,{name='',handle=null,key=null,server=fal
  resetBranchFocus();closeFilePopover();closeNodeStatus();finishEdgeLabel(false);closeModal();clearTimeout(saveTimer);for(const u of DOC.urls.values())URL.revokeObjectURL(u);for(const u of liveAssets.values())URL.revokeObjectURL(u);DOC=next;liveAssets=assets;
  S.project=prepared;S.server=server;S.readOnly=readOnly;S.locked=readOnly;S.home=false;S.view={x:60,y:60,z:1};S.pageIndex=Math.max(0,Math.min(prepared.pages.length-1,prepared.viewState?.page||0));
  S.history=[];S.redo=[];S.selected=new Set();S.selectedEdges=new Set();S.selectedEdge=S.selectedBus=S.selectedDrawing=null;S.selectedDrawings?.clear();S.selectedBuses?.clear();S.pendingPort=null;S.addingBus=null;S.materialChecks=new Map();S.popover=null;S.guides=[];S.iconEdit=false;S.placement=null;S.addingBusPair=null;S.search='';S.folded=new Set();S.collapsed=Object.fromEntries(Object.entries(prepared.viewState?.collapsed||{}).map(([k,v])=>[k,new Set(v)]));S.tool='select';S.quickCell=null;quickEdit=null;S.connectionCycle=null;if(S.propertyPainter)S.propertyPainter.source=null;
- S.collapsedRows=rows;S.rowControls=rowControls;S.compact=prepared.viewState?.compact!==false;S.dirty=false;S.fileDirty=!readOnly&&(fileDirty||!name||(project.schemaVersion||1)<3);renderShell();render();fit();if(!readOnly){S.dirty=true;await save();}return prepared;
+ S.collapsedRows=rows;S.rowControls=rowControls;S.compact=prepared.viewState?.compact!==false;S.dirty=false;S.fileDirty=!readOnly&&(fileDirty||!name||(project.schemaVersion||1)<3);
+ clearRunPlayback();runUI.selected='';runUI.open=readOnly&&!!prepared.runs?.length;if(runUI.open)S.rightHidden=false;
+ renderShell();render();fit();if(!readOnly){S.dirty=true;await save();}return prepared;
 }
 
 async function home(){
+ clearRunPlayback();
  const openToken=++documentOpenVersion;commitActiveEditors();if(S.dirty&&!S.readOnly)await save();clearTimeout(saveTimer);resetBranchFocus();closeFilePopover();closeNodeStatus();finishEdgeLabel(false);closeModal();S.home=true;S.pendingPort=null;
  recentDocuments=await dbGet('recent-v3')||[];const legacy=await dbGet('project');
- if(openToken!==documentOpenVersion)return;$('#app').classList.remove('read-only');$('#app').innerHTML=`<header class="home-header"><div class="brand"><span class="logo">⌁</span><strong>Pipeline Studio <span class="version-tag">${RELEASE}</span></strong></div><span class="muted">Среда создания интерактивных процессов</span></header><main class="home-main"><section class="home-intro"><div class="caps">ВАШИ ПРОЦЕССЫ. ВАШИ ФАЙЛЫ.</div><h1>С чего начнём?</h1><p>Studio — отдельно. Документы и материалы — в ваших папках.<br>Откройте пайплайн для редактирования или создайте новый.</p><div class="home-actions"><button id="home-new" class="primary"><span>＋</span><strong>Новый документ</strong><small>Чистый холст</small></button><button id="home-open"><span>▱</span><strong>Открыть HTML</strong><small>Документ пайплайна · также поддерживается JSON</small></button></div></section><section class="recent-section"><div class="row spread"><h2>Недавние документы</h2><small>${desktopAvailable()?'Черновики приложения':'Черновики этого браузера'} · не поиск по всему диску</small></div><div class="recent-list">${recentDocuments.map(r=>`<div class="recent-item"><span class="document-mark">▱</span><div class="recent-info"><strong>${esc(r.title)}</strong><small class="recent-path" title="${esc(r.path||r.name)}">${r.path&&r.path!==r.name?'Путь: '+esc(r.path):esc(r.name)+' · полный путь недоступен браузеру'}</small><small>${new Date(r.modified).toLocaleString('ru-RU')}</small></div><button data-recent="${esc(r.key)}">Открыть</button><button class="icon ghost" data-forget="${esc(r.key)}" title="Убрать из недавних, не удаляя файл">×</button></div>`).join('')||'<div class="recent-empty">Здесь появятся документы, которые вы откроете в Studio.<br>HTML-программа больше не содержит вашу рабочую схему.</div>'}</div>${legacy?'<button id="recover-legacy" style="margin-top:16px">Восстановить найденный черновик 0.2</button>':''}${S.serverAvailable?'<button id="home-server" style="margin:16px 0">Открыть серверный черновик</button>':''}</section><section class="home-notes"><div><strong>Редактирование</strong><p>Открыть документ → изменить → сохранить HTML. Автокопия в браузере не заменяет файл на диске.</p></div><div><strong>Просмотр</strong><p>Коллеги открывают HTML документа. Видео и PDF загружаются из папок по ссылкам, а не упаковываются в HTML.</p></div></section></main>`;
+ if(openToken!==documentOpenVersion)return;$('#app').classList.remove('read-only');$('#app').innerHTML=`<header class="home-header"><div class="brand"><span class="logo">⌁</span><strong>Pipeline Studio <span class="version-tag">${RELEASE}</span></strong></div><span class="muted">Среда создания интерактивных процессов</span></header><main class="home-main"><section class="home-intro"><div class="caps">ВАШИ ПРОЦЕССЫ. ВАШИ ФАЙЛЫ.</div><h1>С чего начнём?</h1><p>Studio — отдельно. Документы и материалы — в ваших папках.<br>Откройте пайплайн для редактирования или создайте новый.</p><div class="home-actions"><button id="home-new" class="primary"><span>＋</span><strong>Новый документ</strong><small>Чистый холст</small></button><button id="home-open"><span>▱</span><strong>Открыть документ</strong><small>HTML, XML или JSON Pipeline Studio</small></button></div></section><section class="recent-section"><div class="row spread"><h2>Недавние документы</h2><small>${desktopAvailable()?'Черновики приложения':'Черновики этого браузера'} · не поиск по всему диску</small></div><div class="recent-list">${recentDocuments.map(r=>`<div class="recent-item"><span class="document-mark">▱</span><div class="recent-info"><strong>${esc(r.title)}</strong><small class="recent-path" title="${esc(r.path||r.name)}">${r.path&&r.path!==r.name?'Путь: '+esc(r.path):esc(r.name)+' · полный путь недоступен браузеру'}</small><small>${new Date(r.modified).toLocaleString('ru-RU')}</small></div><button data-recent="${esc(r.key)}">Открыть</button><button class="icon ghost" data-forget="${esc(r.key)}" title="Убрать из недавних, не удаляя файл">×</button></div>`).join('')||'<div class="recent-empty">Здесь появятся документы, которые вы откроете в Studio.<br>HTML-программа больше не содержит вашу рабочую схему.</div>'}</div>${legacy?'<button id="recover-legacy" style="margin-top:16px">Восстановить найденный черновик 0.2</button>':''}${S.serverAvailable?'<button id="home-server" style="margin:16px 0">Открыть серверный черновик</button>':''}</section><section class="home-notes"><div><strong>Редактирование</strong><p>Открыть документ → изменить → сохранить HTML. Автокопия в браузере не заменяет файл на диске.</p></div><div><strong>Просмотр</strong><p>Коллеги открывают HTML документа. Видео и PDF загружаются из папок по ссылкам, а не упаковываются в HTML.</p></div></section></main>`;
  $('#home-new').onclick=()=>inputDialog('Новый документ','Название','Новый процесс',caught(async title=>{const p={format:'pipeline-studio',schemaVersion:3,id:C.uid('project'),title,revision:0,materials:[],pages:[C.createPage('Основной процесс')],settings:{autoBus:true}};await activateDocument(p);S.fileDirty=true;updateStatus();}));
  $('#home-open').onclick=()=>openDocumentPicker().catch(e=>toast(e.message));
  $$('[data-recent]').forEach(b=>b.onclick=caught(()=>openRecentDocument(b.dataset.recent)));
@@ -612,7 +616,14 @@ async function home(){
  $('#app').ondragover=e=>e.preventDefault();$('#app').ondrop=e=>{if(!S.home)return;e.preventDefault();const f=e.dataTransfer.files[0];if(f)openDocumentFile(f).catch(err=>toast(err.message));};
 }
 function parseDocumentText(text){
- const input=String(text).replace(/^\uFEFF/,'').trim();if(input.startsWith('{'))return normalize(JSON.parse(input));
+ let input=String(text).replace(/^\uFEFF/,'').trim();if(input.startsWith('{'))return normalize(JSON.parse(input));
+ if(input.startsWith('<?xml')){
+  const xml=new DOMParser().parseFromString(input,'application/xml');
+  if(xml.doctype||xml.documentElement.getAttribute('data-pipeline-studio')!=='1')throw Error('Нужен XML, экспортированный из Pipeline Studio');
+  const payload=xml.getElementById('pipeline-viewer');
+  if(!payload)throw Error('В XML отсутствуют данные схемы');
+  input=payload.textContent;
+ }
  const doc=new DOMParser().parseFromString(input,'text/html');const node=doc.querySelector('script#pipeline-document[type="application/json"]');if(node)return normalize(JSON.parse(node.textContent));
  // Read only the literal JSON value from legacy exports. No eval / script execution.
  for(const script of doc.querySelectorAll('script')){
@@ -623,15 +634,15 @@ function parseDocumentText(text){
    if(start<0&&!/\s/.test(ch)&&ch!=='{')break;
   }
  }
- throw Error('Это не документ Pipeline Studio. Нужен HTML / JSON с данными схемы, а не сама программа Studio.');
+ throw Error('Нужен документ Pipeline Studio в формате HTML, XML или JSON.');
 }
 async function openDocumentFile(file,handle=null,opts={}){const openToken=opts.openToken??++documentOpenVersion;if(file.size>40*1024*1024)throw Error('Документ превышает 40 МБ');const p=parseDocumentText(await file.text());if(openToken!==documentOpenVersion)return;const active=await activateDocument(p,{name:file.name,handle,...opts,openToken});if(!active||openToken!==documentOpenVersion)return;if(file.path||file.webkitRelativePath)DOC.path=file.path||file.webkitRelativePath;await rememberDocument();if(!handle)toast('Открыт документ. Папку материалов можно подключить кнопкой «Папка».',6500);return p;}
 
 async function openDocumentPicker(){
  const openToken=++documentOpenVersion;commitActiveEditors();if(S.dirty&&!S.readOnly)await save();
  if(nativeAvailable()){const info=await nativeCall('pick-document');if(info.cancelled)return;let text;if(desktopAvailable())text=(await nativeCall('read-document',{nativePath:info.nativePath})).text;else{const response=await fetch('/native/content?path='+encodeURIComponent(info.nativePath)+'&token='+encodeURIComponent(window.STUDIO_NATIVE.token),{cache:'no-store'});if(!response.ok)throw Error('Документ недоступен');text=await response.text();}await activateDocument(parseDocumentText(text),{name:info.filename,nativePath:info.nativePath,nativeDigest:info.digest,openToken});return;}
- if(window.showOpenFilePicker&&window.isSecureContext){try{const [h]=await showOpenFilePicker({types:[{description:'Документ Pipeline Studio',accept:{'text/html':['.html','.htm'],'application/json':['.json']}}],multiple:false,startIn:DOC.handle||DOC.root||'documents'});return await openDocumentFile(await h.getFile(),h,{openToken});}catch(e){if(e.name==='AbortError')return;if(!['SecurityError','NotAllowedError'].includes(e.name))throw e;}}
- const fs=await pickFiles('.html,.htm,.json',false);if(fs.length)return openDocumentFile(fs[0],null,{openToken});
+ if(window.showOpenFilePicker&&window.isSecureContext){try{const [h]=await showOpenFilePicker({types:[{description:'Документ Pipeline Studio',accept:{'text/html':['.html','.htm'],'application/json':['.json'],'application/xml':['.xml']}}],multiple:false,startIn:DOC.handle||DOC.root||'documents'});return await openDocumentFile(await h.getFile(),h,{openToken});}catch(e){if(e.name==='AbortError')return;if(!['SecurityError','NotAllowedError'].includes(e.name))throw e;}}
+ const fs=await pickFiles('.html,.htm,.xml,.json',false);if(fs.length)return openDocumentFile(fs[0],null,{openToken});
 }
 async function openRecentFile(key){const h=await dbGet('handle:'+key);if(!h){toast('Браузер не сохранил доступ к исходному файлу. Выберите его снова.',6000);return openDocumentPicker();}try{if(await h.queryPermission({mode:'read'})!=='granted'&&await h.requestPermission({mode:'read'})!=='granted')return;return openDocumentFile(await h.getFile(),h,{key});}catch(e){if(e.name==='NotFoundError')throw Error('Файл перемещён. Откройте его из новой папки — браузерный черновик сохранён.');throw e;}}
 async function selectFolder(){
@@ -658,7 +669,7 @@ function assetURL(m,preview=false){
   if(S.project?.materialBaseURL&&httpURL(S.project.materialBaseURL))return new URL(encoded,S.project.materialBaseURL.replace(/\/?$/,'/')).href;
   // A preview may have no resolvable base (e.g. about:blank). Missing media
   // must never abort document startup; folder selection can resolve it later.
-  if(DOC.direct||DOC.nativePath){try{const u=new URL(encoded,DOC.direct?location.href:windowsFileURL(DOC.nativePath));return ['http:','https:','file:'].includes(u.protocol)?u.href:'';}catch{}}
+  if(DOC.direct||DOC.nativePath){try{const directURL=location.href==='about:srcdoc'?document.baseURI:location.href;const u=new URL(encoded,DOC.direct?directURL:windowsFileURL(DOC.nativePath));return ['http:','https:','file:'].includes(u.protocol)?u.href:'';}catch{}}
  }
  const nativePath=preview?m.previewNativePath:m.nativePath;if(location.protocol==='file:'&&nativePath&&!DOC.sessionFiles.has(key))return windowsFileURL(nativePath);
  if(preview&&m.previewURL)return httpURL(m.previewURL)||'';
@@ -750,22 +761,52 @@ async function buildDocumentHTML(project){
  const text='<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+esc(project.title)+' — Pipeline</title><style id="style-source">'+css+'</style></head><body><div id="app"></div><div id="modal-root"></div><div id="toast" role="status"></div><script id="pipeline-document" type="application/json">'+safeJSON(project)+end+'<script>window.STUDIO_DOCUMENT=true;window.PORTABLE_READONLY=true;window.EMOJI='+safeJSON(EMOJI)+';'+end+'<script id="core-source">'+core.replace(/<\/script/gi,'<\\/script')+end+'<script id="app-source">'+app.replace(/<\/script/gi,'<\\/script')+end+'</body></html>';
  if(new Blob([text]).size>40*1024*1024)throw Error('Документ превышает 40 МБ');return text;
 }
+async function buildDocumentXML(project){
+ const text=C.packDocumentXML(project.title,await buildDocumentHTML(project));
+ if(new Blob([text]).size>40*1024*1024)throw Error('XML превышает 40 МБ. Вынесите вложения в папку.');
+ return text;
+}
+const isXMLDocument=name=>/\.xml$/i.test(name||'');
+const isWritableDocument=name=>/\.(html?|xml)$/i.test(name||'');
 function saveDocument(asNew=false){commitActiveEditors();const doc=DOC,run=()=>DOC===doc&&!S.home?writeDocument(asNew):undefined;const job=(doc.saveQueue||Promise.resolve()).then(run,run);doc.saveQueue=job.catch(()=>{});return job;}
 async function writeDocument(asNew=false){
- if(!S.project)return;const doc=DOC,key=DOC.key;let handle=asNew||!DOC.handle?.name?.toLowerCase().endsWith('.html')?null:DOC.handle;const name=prettyName(S.project.title)+'.html';
+ if(!S.project)return;
+ const doc=DOC,key=DOC.key;
+ let handle=asNew||!isWritableDocument(DOC.handle?.name)?null:DOC.handle;
+ const name=prettyName(S.project.title)+(isXMLDocument(DOC.nativePath||DOC.name)?'.xml':'.html');
  if(nativeAvailable()){
-  let target=DOC.nativePath&&/\.html?$/i.test(DOC.nativePath)&&!asNew?{nativePath:DOC.nativePath,digest:DOC.nativeDigest}:await nativeCall('pick-save',{name,documentPath:DOC.nativePath||''});if(target.cancelled)return;
-  if(DOC!==doc||DOC.key!==key)return;const version=S.editVersion,snapshot=documentSnapshot(),sourceDocumentPath=DOC.nativePath||'',project=await portableProject(false,snapshot,target.nativePath,sourceDocumentPath),text=await buildDocumentHTML(project),saved=await nativeCall('save',{nativePath:target.nativePath,digest:target.digest,text});if(DOC!==doc||DOC.key!==key)return;
-  applySavedMaterialPaths(S.project,snapshot,project,saved.nativePath,sourceDocumentPath);for(const history of [...S.history,...S.redo])applySavedMaterialPaths(history,snapshot,project,saved.nativePath,sourceDocumentPath);DOC.nativePath=saved.nativePath;DOC.nativeDigest=saved.digest;DOC.name=saved.filename;DOC.path=saved.nativePath;DOC.handle=null;S.dirty=true;S.fileDirty=S.editVersion!==version;DOC.exportedAt=Date.now();await save();if(DOC!==doc||DOC.key!==key)return;await rememberDocument();updateStatus();toast(S.fileDirty?'HTML записан. Более поздние правки ещё не сохранены в файл.':'HTML записан. Источники остались на своих местах.');return;
+  const target=isWritableDocument(DOC.nativePath)&&!asNew?{nativePath:DOC.nativePath,digest:DOC.nativeDigest}:await nativeCall('pick-save',{name,documentPath:DOC.nativePath||''});
+  if(target.cancelled||DOC!==doc||DOC.key!==key)return;
+  const version=S.editVersion,snapshot=documentSnapshot(),sourceDocumentPath=DOC.nativePath||'',xml=isXMLDocument(target.nativePath);
+  const project=await portableProject(xml,snapshot,target.nativePath,sourceDocumentPath);
+  const text=await (xml?buildDocumentXML(project):buildDocumentHTML(project));
+  if(DOC!==doc||DOC.key!==key)return;
+  const saved=await nativeCall('save',{nativePath:target.nativePath,digest:target.digest,text});if(DOC!==doc||DOC.key!==key)return;
+  applySavedMaterialPaths(S.project,snapshot,project,saved.nativePath,sourceDocumentPath);for(const history of [...S.history,...S.redo])applySavedMaterialPaths(history,snapshot,project,saved.nativePath,sourceDocumentPath);DOC.nativePath=saved.nativePath;DOC.nativeDigest=saved.digest;DOC.name=saved.filename;DOC.path=saved.nativePath;DOC.handle=null;S.dirty=true;S.fileDirty=S.editVersion!==version;DOC.exportedAt=Date.now();await save();if(DOC!==doc||DOC.key!==key)return;await rememberDocument();updateStatus();toast(S.fileDirty?'Файл записан. Есть более поздние правки.':'Документ сохранён');return;
  }
  // Pick first, before asynchronous packaging can consume transient user activation.
- if(!handle&&window.showSaveFilePicker&&window.isSecureContext){try{handle=await showSaveFilePicker({suggestedName:asNew?name:(DOC.name?.toLowerCase().endsWith('.html')?DOC.name:name),startIn:DOC.handle||DOC.root||'documents',types:[{description:'Документ Pipeline',accept:{'text/html':['.html']}}]});}catch(e){if(e.name==='AbortError')return;if(!['SecurityError','NotAllowedError'].includes(e.name))throw e;}}
- if(DOC!==doc||DOC.key!==key)return;const version=S.editVersion,p=await portableProject(false),text=await buildDocumentHTML(p),blob=new Blob([text],{type:'text/html;charset=utf-8'});
- if(handle){if(await handle.queryPermission({mode:'readwrite'})!=='granted'&&await handle.requestPermission({mode:'readwrite'})!=='granted')throw Error('Сохранение не разрешено. Используйте «Скачать HTML».');const writer=await handle.createWritable();try{await writer.write(blob);await writer.close();}catch(e){try{await writer.abort();}catch{}throw e;}if(DOC!==doc||DOC.key!==key)return;DOC.handle=handle;DOC.name=handle.name;
- }else{throw Error('Для записи текущего файла откройте документ через окно выбора файла в Chrome или Edge. Отдельную копию можно создать через меню «Документ» → «Скачать HTML».');}
- if(handle&&DOC.root){try{const rel=await DOC.root.resolve(handle);if(DOC!==doc||DOC.key!==key)return;if(rel)DOC.path=DOC.folderName+'/'+rel.join('/');else if(asNew)DOC.path='';if(!rel&&asNew){DOC.root=null;DOC.folderName='';}}catch{if(DOC!==doc||DOC.key!==key)return;if(asNew)DOC.path='';}}else if(asNew)DOC.path='';DOC.exportedAt=Date.now();S.fileDirty=S.editVersion!==version;await save();if(DOC!==doc||DOC.key!==key)return;await rememberDocument();updateStatus();toast(S.fileDirty?'HTML записан. Более поздние правки ещё не сохранены в файл.':'HTML документа записан. Материалы остаются отдельными файлами.',6500);
+ if(!handle&&window.showSaveFilePicker&&window.isSecureContext){try{handle=await showSaveFilePicker({suggestedName:asNew?name:(isWritableDocument(DOC.name)?DOC.name:name),startIn:DOC.handle||DOC.root||'documents',types:[{description:'Документ Pipeline',accept:{'text/html':['.html'],'application/xml':['.xml']}}]});}catch(e){if(e.name==='AbortError')return;if(!['SecurityError','NotAllowedError'].includes(e.name))throw e;}}
+ if(DOC!==doc||DOC.key!==key)return;
+ if(!handle)throw Error('Выберите файл для записи в Chrome или Edge. Отдельную копию можно скачать через меню «Документ».');
+ const version=S.editVersion,xml=isXMLDocument(handle.name),p=await portableProject(xml);
+ const text=await (xml?buildDocumentXML(p):buildDocumentHTML(p));
+ const blob=new Blob([text],{type:xml?'application/xml;charset=utf-8':'text/html;charset=utf-8'});
+ if(await handle.queryPermission({mode:'readwrite'})!=='granted'&&await handle.requestPermission({mode:'readwrite'})!=='granted')throw Error('Сохранение не разрешено. Отдельную копию можно скачать через меню «Документ».');
+ if(DOC!==doc||DOC.key!==key)return;
+ const writer=await handle.createWritable();try{await writer.write(blob);await writer.close();}catch(e){try{await writer.abort();}catch{}throw e;}if(DOC!==doc||DOC.key!==key)return;
+ DOC.handle=handle;DOC.name=handle.name;
+ if(DOC.root){try{const rel=await DOC.root.resolve(handle);if(DOC!==doc||DOC.key!==key)return;if(rel)DOC.path=DOC.folderName+'/'+rel.join('/');else if(asNew)DOC.path='';if(!rel&&asNew){DOC.root=null;DOC.folderName='';}}catch{if(DOC!==doc||DOC.key!==key)return;if(asNew)DOC.path='';}}else if(asNew)DOC.path='';DOC.exportedAt=Date.now();S.fileDirty=S.editVersion!==version;await save();if(DOC!==doc||DOC.key!==key)return;await rememberDocument();updateStatus();toast(S.fileDirty?'Файл записан. Есть более поздние правки.':'Документ сохранён',6500);
 }
 async function exportHTML(){closeModal();const p=await portableProject(false);const text=await buildDocumentHTML(p);download(new Blob([text],{type:'text/html;charset=utf-8'}),prettyName(p.title)+'.html');toast('HTML документа создан. Внешние материалы в него не встроены.');}
+async function exportXML(){
+ const ctx=operationContext(),project=await portableProject(true);
+ requireContext(ctx);
+ const text=await buildDocumentXML(project);
+ requireContext(ctx);
+ const blob=new Blob([text],{type:'application/xml;charset=utf-8'});
+ download(blob,prettyName(project.title)+'.xml');
+ toast('XML с прогонами сохранён');
+}
 async function exportJSON(embed=false){const p=await portableProject(embed);download(new Blob([JSON.stringify(p,null,2)],{type:'application/json'}),prettyName(p.title)+(embed?'-backup':'')+'.json');toast(embed?'JSON-резервная копия подготовлена':'Данные документа сохранены отдельно');}
 async function externalizeAssets(){
  if(!window.showDirectoryPicker||!window.isSecureContext)throw Error('Для записи папки нужен браузер с File System Access. Иначе перепривяжите материалы к существующим файлам вручную.');
@@ -829,12 +870,13 @@ function renderScene(){
   S.display=C.isolateCellBranch(pg,S.branchFocus.target,S.compact);
   if(!S.display){resetBranchFocus();render();return;}
  }else{
-  S.display=checked?.display&&checked.nodes===pg.nodes&&checked.edges===pg.edges&&checked.buses===pg.buses
+  S.display=runPlayback()?C.display(pg,new Set(),false,new Set(),{collapsedRows:new Set()})
+   :checked?.display&&checked.nodes===pg.nodes&&checked.edges===pg.edges&&checked.buses===pg.buses
    ?checked.display:C.display(pg,collapsed(),S.compact,S.folded,{collapsedRows:collapsedRows()});
  }
  $('#frames').innerHTML='';const existing=new Map([...$('#nodes').children].map(el=>[el.dataset.node,el]));
  if(S.dragMoving&&existing.size===S.display.nodes.length&&S.display.nodes.every(n=>existing.has(n.id))){for(const n of S.display.nodes){const el=existing.get(n.id);el.style.left=n.x+'px';el.style.top=n.y+'px';el.style.width=n.w+'px';el.style.height=n.h+'px';}}
- else{const container=$('#nodes'),keep=new Set();for(const n of S.display.nodes){const html=nodeHTML(n);let el=existing.get(n.id);if(!el||nodeMarkup.get(el)!==html){const template=document.createElement('template');template.innerHTML=html;const next=template.content.firstElementChild;nodeMarkup.set(next,html);if(el)el.replaceWith(next);else container.append(next);el=next;}keep.add(n.id);}for(const [id,el] of existing)if(!keep.has(id))el.remove();}renderEdges();renderInk();transform();updateConnectStatus();highlightCommonPorts();renderGuides();}
+ else{const container=$('#nodes'),keep=new Set();for(const n of S.display.nodes){const html=nodeHTML(n);let el=existing.get(n.id);if(!el||nodeMarkup.get(el)!==html){const template=document.createElement('template');template.innerHTML=html;const next=template.content.firstElementChild;nodeMarkup.set(next,html);if(el)el.replaceWith(next);else container.append(next);el=next;}keep.add(n.id);}for(const [id,el] of existing)if(!keep.has(id))el.remove();}renderEdges();renderInk();transform();updateConnectStatus();highlightCommonPorts();renderGuides();paintRunOverlay();}
 function v4RenderEdges(){
  if(!S.display||!$('#edges'))return;const bundle=C.bundleRoutes(S.display);S.bundle=bundle;
  const defs='<defs><marker id="arrowhead" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M0 0L8 4L0 8Z" fill="context-stroke"/></marker></defs>';
@@ -897,6 +939,7 @@ async function onAppClick(e){
  }catch(err){toast(err.message,8500);}
 }
 async function v3Action(a){
+ if(a==='export-xml')return exportXML();
  if(a==='close-project')return closeProject();if(a==='home')return home();if(a==='open-document'||a==='import')return openDocumentPicker();if(a==='bind-folder')return bindFolder();
  if(a==='toggle-left'||a==='toggle-right'){S[a==='toggle-left'?'leftHidden':'rightHidden']=!S[a==='toggle-left'?'leftHidden':'rightHidden'];applyPanelState();renderSubbar();return;}
  if(a==='save-document'||a==='save')return saveDocument();if(a==='save-as')return saveDocument(true);if(a==='download-html'||a==='portable-view'||a==='portable-edit')return exportHTML();
@@ -1305,7 +1348,9 @@ function tableEditor(node){
  const resizeEditor=new ResizeObserver(()=>{if(!$('#table-grid'))return;requestAnimationFrame(()=>{if($('#table-grid')){sync();refreshMetrics();}});});resizeEditor.observe(dialog);const oldDisconnect=observer.disconnect.bind(observer);observer.disconnect=()=>{resizeEditor.disconnect();oldDisconnect();};
 }
 function projectMenu(){
- const groups=[['Проект',[['open-document','folder','Открыть документ','Выбрать HTML или JSON с другой схемой'],['close-project','closeProject','Закрыть проект','Сохранить черновик и вернуться к недавним документам']]],['Сохранение',S.readOnly?[['download-html','download','Скачать HTML','Создать автономный просмотрщик схемы с внешними материалами'],['export-json','data','Данные JSON','Сохранить данные схемы без программы']]:[['save-document','save','Сохранить HTML','Обновить текущий HTML на диске · Ctrl+S'],['save-as','save','Сохранить как…','Записать документ в новый HTML · Ctrl+Shift+S'],['download-html','download','Скачать HTML','Скачать отдельную копию HTML документа'],['export-json','data','Данные JSON','Сохранить данные схемы без программы']]],['Материалы',[['bind-folder','folder','Подключить папку','Разрешить доступ к материалам рядом с документом'],['registry','registry','Материалы','Открыть реестр файлов, адресов и внутренних ссылок'],...(S.readOnly?[]:[['externalize','download','Вынести вложения','Записать старые встроенные вложения в папку materials'],['backup-json','data','Резервная копия','JSON с данными схемы и прежними встроенными вложениями']])]],...(!S.readOnly?[['Редактирование',[['rename-project','rename','Название проекта','Переименовать текущий документ'],['rename-page','pages','Название листа','Переименовать открытый лист схемы'],['layout','magnet','Автораскладка','Автоматически разместить блоки по связям'],['draw-settings','pen','Рисование','Настроить цвет, толщину и привязку рисунков'],['groups','group','Подпроцессы','Организовать блоки в группы и метки']]]]:[]),['Вывод',[['print','pdf','PDF / печать','Распечатать схему или сохранить PDF средствами браузера']]]];
+ const groups=[['Проект',[['open-document','folder','Открыть документ','Выбрать HTML или JSON с другой схемой'],['close-project','closeProject','Закрыть проект','Сохранить черновик и вернуться к недавним документам']]],['Сохранение',S.readOnly?[['download-html','download','Скачать HTML','Создать автономный просмотрщик схемы с внешними материалами'],['export-json','data','Данные JSON','Сохранить данные схемы без программы']]:[['save-document','save','Сохранить документ','Обновить текущий HTML или XML · Ctrl+S'],['save-as','save','Сохранить как…','Записать новый HTML или XML · Ctrl+Shift+S'],['download-html','download','Скачать HTML','Скачать отдельную копию HTML документа'],['export-json','data','Данные JSON','Сохранить данные схемы без программы']]],['Материалы',[['bind-folder','folder','Подключить папку','Разрешить доступ к материалам рядом с документом'],['registry','registry','Материалы','Открыть реестр файлов, адресов и внутренних ссылок'],...(S.readOnly?[]:[['externalize','download','Вынести вложения','Записать старые встроенные вложения в папку materials'],['backup-json','data','Резервная копия','JSON с данными схемы и прежними встроенными вложениями']])]],...(!S.readOnly?[['Редактирование',[['rename-project','rename','Название проекта','Переименовать текущий документ'],['rename-page','pages','Название листа','Переименовать открытый лист схемы'],['layout','magnet','Автораскладка','Автоматически разместить блоки по связям'],['draw-settings','pen','Рисование','Настроить цвет, толщину и привязку рисунков'],['groups','group','Подпроцессы','Организовать блоки в группы и метки']]]]:[]),['Вывод',[['print','pdf','PDF / печать','Распечатать схему или сохранить PDF средствами браузера']]]];
+ groups[1][1].push(['export-xml','run','XML с прогонами','Сохранить схему, маршруты и автономное воспроизведение']);
+ groups[0][1][0][3]='Выбрать HTML, XML или JSON с другой схемой';
  modal('Документ',`<div class="document-menu">${groups.map(([title,items])=>`<section class="document-command-group"><h3>${title}</h3><div class="document-command-grid">${items.map(args=>menuCommand(...args)).join('')}</div></section>`).join('')}</div>`,'',true);$('.modal').classList.add('document-menu-dialog');$$('[data-action]',$('.modal')).forEach(b=>b.onclick=()=>{const cmd=b.dataset.action;if(!['save-document','save-as','externalize'].includes(cmd))closeModal();action(cmd).catch(err=>toast(err.message,8500));});
 }
 
@@ -1389,6 +1434,13 @@ function command(a,icon,title,text='',cls=''){return `<button type="button" data
 Object.assign(S,{editModes:{edges:true,centers:true,ports:false,connections:true,grid:false,gridSize:20,ortho:false,moveChain:false,shared:false},popover:null,guides:[],addingBus:null,materialChecks:new Map()});
 function renderShell(){
  $('#app').innerHTML=`<header class="topbar"><button class="brand brand-home" data-action="home" title="Документы Studio" aria-label="Документы Studio"><span class="logo">${uiIcon('chain')}</span><span><strong>Pipeline Studio <span class="version-tag">${RELEASE}</span></strong></span></button><div class="project-head"><strong id="project-title"></strong><div class="project-meta"><button id="page-trigger" class="page-trigger" data-action="pages" title="Страницы документа"></button><span id="save-status" class="save-status"></span></div></div><div id="top-actions" class="row"></div></header><main class="workspace"><section class="center"><div class="canvas-wrap"><div id="stage"><div id="world"><div id="frames"></div><svg id="edges"></svg><svg id="ink"></svg><div id="nodes"></div><svg id="guides"></svg></div></div><div id="tools" class="toolrail"></div><div id="dock" class="zoom-tools" role="toolbar" aria-label="Вид и режимы редактирования"></div><div id="mode-popover" hidden></div><div id="connect-status" class="connect-status" hidden></div></div></section><aside class="right-panel"><header class="inspector-head"><span>Свойства</span></header><div id="inspector" class="rightbar"></div></aside><button id="inspector-toggle" data-action="toggle-right" class="inspector-toggle" title="Скрыть свойства" aria-label="Скрыть свойства"></button></main>`;
+ $('.topbar').insertAdjacentHTML('afterend','<div class="sheet-strip"><nav id="sheet-bar" aria-label="Листы документа"></nav><button id="show-runs" type="button"></button></div>');
+ $('#world').insertAdjacentHTML('beforeend','<svg id="run-overlay" aria-hidden="true"></svg>');
+ $('.right-panel').insertAdjacentHTML('beforeend','<section id="run-panel" aria-label="Прогоны" hidden></section>');
+ $('#sheet-bar').addEventListener('click',e=>{const b=e.target.closest('[data-sheet-tab]');if(b)openSheet(Number(b.dataset.sheetTab));});
+ $('#show-runs').onclick=toggleRunPanel;
+ $('#run-panel').addEventListener('click',caught(handleRunPanelClick));
+ $('#run-panel').addEventListener('change',onRunSettings);
  const app=$('#app');app.removeEventListener('click',onAppClick);app.addEventListener('click',onAppClick);app.removeEventListener('change',onChange);app.addEventListener('change',onChange);app.ondragover=null;app.ondrop=null;
  const stage=$('#stage');stage.addEventListener('pointerdown',onPointerDown);stage.addEventListener('wheel',onWheel,{passive:false});stage.addEventListener('dblclick',onDoubleClick);stage.addEventListener('contextmenu',contextMenu);stage.addEventListener('dragover',e=>e.preventDefault());stage.addEventListener('drop',onDrop);
  if(!S.eventsBound){S.eventsBound=true;document.addEventListener('keydown',onKey);document.addEventListener('keyup',e=>{if(e.code==='Space')S.space=false;});
@@ -1401,8 +1453,10 @@ function applyPanelState(){const w=$('.workspace');if(!w)return;w.classList.togg
 function renderTop(){
  $('#top-actions').innerHTML=S.branchFocus
   ?'<span class="branch-focus-label" role="status">Изоляция ветки</span>'+command('exit-branch-focus','fit','Показать всю схему · Esc','Показать всю схему','branch-focus-exit')
-  :(S.locked?'<span class="reader-label">Просмотр</span>':command('preview',S.readOnly?'edit':'preview',S.readOnly?'Вернуться в редактор':'Предпросмотр',S.readOnly?'Редактор':'Просмотр'))+command('registry','registry','Материалы документа',`Материалы <span class="counter">${S.project.materials.length}</span>`)+command('bind-folder','folder','Подключить папку материалов')+'<span class="command-separator"></span>'+(S.readOnly?'':command('save-document','save','Сохранить HTML документа · Ctrl+S','Сохранить','save-command'))+command('menu','more','Документ и экспорт');
+  :(S.locked?'<span class="reader-label">Просмотр</span>':command('preview',S.readOnly?'edit':'preview',S.readOnly?'Вернуться в редактор':'Предпросмотр',S.readOnly?'Редактор':'Просмотр'))+command('registry','registry','Материалы документа',`Материалы <span class="counter">${S.project.materials.length}</span>`)+command('bind-folder','folder','Подключить папку материалов')+'<span class="command-separator"></span>'+(S.readOnly?'':command('save-document','save','Сохранить документ · Ctrl+S','Сохранить','save-command'))+command('menu','more','Документ и экспорт');
  $('#page-trigger').innerHTML=uiIcon('pages')+`<span>${esc(page().title)}</span><span class="page-fraction">${S.pageIndex+1}/${S.project.pages.length}</span>`;
+ renderSheetStrip();
+ renderRunPanel();
 }
 function renderLeft(){/* Sidebar intentionally removed; pages/search open on demand. */}
 function renderSubbar(){renderDock();}
@@ -2289,5 +2343,313 @@ document.addEventListener('click',e=>{const open=e.target.closest('[data-open-co
 document.addEventListener('selectstart',e=>{const el=e.target.nodeType===1?e.target:e.target.parentElement;if(!el?.closest('input,textarea,[contenteditable="true"]'))e.preventDefault();});
 document.addEventListener('dragstart',e=>{if(e.target.closest?.('#app'))e.preventDefault();});
 
-window.Studio={ready:editorReady,reserveDocumentOpen,activeCell,applyTheme,selectedConnectionIds,selectionV075,deleteSelectionV075,selectFolder,onChange,nodeStateIcons,requestMaterialRemoval,projectMenu,closeProject,collapsedRows,toggleRow,setRowControl,jumpToNode,editMaterial,openRecentDocument,locationText,deleteSegment,measureNode,materialChip,fileIcon,fileType,materialLocation,materialExternal,jumpToCell,measureCell,setTool,renderInspector,renderEdges,uiIcon,pagesDialog,searchDialog,checkHTTP,checkMaterial,checkAllMaterials,materialCheckDialog,renderGuides,highlightCommonPorts,state:S,Core:C,init,home,render,fit,focusNode,action,save,saveDocument,makeNode,addNode,tableEditor,registry,preparePrint,exportHTML,exportJSON,portableProject,openMaterial,showNodeMaterials,change,uploadFile,assetURL,normalize,cleanHTML,groupsDialog,groupEditor,arrangeSelection,addRoutePoint,resetRoute,nudge,parseDocumentText,openDocumentFile,activateDocument,buildDocumentHTML,bindFolder,resolveMaterial,toggleNode,connectPorts,choosePort,undo,redo,combineSelected,tableHTML,sceneBounds,get document(){return DOC;}};
+Object.assign(UI_ICONS,{
+ run:'<path d="m9 5 12 7-12 7Z"/><path d="M3 8h2m-3 4h3m-2 4h2"/>',
+ pause:'<path d="M9 5v14m6-14v14"/>',
+ runNext:'<path d="m6 5 10 7L6 19Z M19 5v14"/>',
+ runReset:'<path d="M3 11a9 9 0 1 1 1.5 6M3 4v7h7"/>',
+});
+
+const runUI={open:false,selected:'',speed:1,follow:true,playback:null};
+const runTitle=n=>String(n?.title||'Без названия').split('\n')[0];
+
+function openSheet(index){
+ if(index===S.pageIndex&&!S.branchFocus)return;
+ switchPage(index);render();fit();
+ $('#sheet-bar [aria-current="page"]')?.scrollIntoView({block:'nearest',inline:'nearest'});
+}
+
+function renderSheetStrip(){
+ const bar=$('#sheet-bar'),toggle=$('#show-runs');
+ if(!bar||!toggle)return;
+ const active=bar.contains(document.activeElement);
+ const next=S.project.pages.map((p,i)=>`<button type="button" data-sheet-tab="${i}" title="${esc(p.title)}"${i===S.pageIndex?' aria-current="page"':''}>${esc(p.title)}</button>`).join('');
+ if(bar.dataset.buttons!==next){
+  bar.dataset.buttons=next;bar.innerHTML=next;
+  const current=bar.querySelector('[aria-current="page"]');
+  current?.scrollIntoView({block:'nearest',inline:'nearest'});
+  if(active)current?.focus({preventScroll:true});
+ }
+ const count=S.project.runs?.length||0;
+ toggle.hidden=S.readOnly&&!count;
+ toggle.setAttribute('aria-expanded',String(runUI.open&&!S.rightHidden));
+ toggle.setAttribute('aria-controls','run-panel');
+ toggle.innerHTML=uiIcon('run')+'<span>Прогоны</span>'+(count?`<span class="run-count">${count}</span>`:'');
+}
+
+function toggleRunPanel(){
+ runUI.open=!runUI.open||S.rightHidden;
+ if(runUI.open){
+  if(S.branchFocus){resetBranchFocus();renderScene();fit();}
+  S.rightHidden=false;
+ }
+ if(!runUI.open&&runPlayback()?.playing)pauseRun();
+ applyPanelState();renderRunPanel();renderSheetStrip();
+}
+
+function renderRunPanel(){
+ const panel=$('#run-panel');
+ if(!panel)return;
+ panel.hidden=!runUI.open;
+ $('#inspector').hidden=runUI.open;
+ $('.inspector-head span').textContent=runUI.open?'Прогоны':'Свойства';
+ if(!runUI.open)return;
+ const runs=S.project.runs||[];
+ const run=runs.find(r=>r.id===runUI.selected)||runs[0];
+ runUI.selected=run?.id||'';
+ const create=!S.readOnly?'<button type="button" class="run-new" data-run-action="new">＋ Новый прогон</button>':'';
+ const list=runs.map(r=>{
+  const validSheet=S.project.pages.some(pg=>pg.id===r.pageId);
+  return `<button type="button" class="run-option" data-run-id="${esc(r.id)}" aria-pressed="${r===run}">${uiIcon('run')}<span><strong>${esc(r.title)}</strong><small>${validSheet?r.steps.length+' шагов':'Лист удалён'}</small></span></button>`;
+ }).join('');
+ const actions=run?`<div class="run-player">
+   <div class="run-status" id="run-status" role="status"></div>
+   <progress id="run-progress" value="0" max="${run.steps.length}" aria-label="Ход прогона"></progress>
+   <strong id="run-stage-title" class="run-stage-title"></strong>
+   <p id="run-stage-detail" class="run-stage-detail"></p>
+   <div class="run-controls">
+    <button type="button" id="run-play" class="run-primary" data-run-action="play">Запустить</button>
+    <button type="button" class="run-icon" data-run-action="step" title="Следующий шаг" aria-label="Следующий шаг">${uiIcon('runNext')}</button>
+    <button type="button" class="run-icon" data-run-action="reset" title="Сбросить прогон" aria-label="Сбросить прогон">${uiIcon('runReset')}</button>
+   </div>
+  </div>
+  <div class="run-settings"><label><input type="checkbox" id="run-follow" ${runUI.follow?'checked':''}> Следовать по схеме</label>
+   <select id="run-speed" aria-label="Скорость прогона">${[.5,1,1.5,2].map(v=>`<option value="${v}" ${v===runUI.speed?'selected':''}>${v.toLocaleString('ru-RU')}×</option>`).join('')}</select></div>`:'';
+ const edit=run&&!S.readOnly?'<div class="run-edit-actions"><button type="button" data-run-action="edit">Изменить маршрут</button><button type="button" data-run-action="delete" class="run-delete">Удалить</button></div>':'';
+ const markup=`${actions}<div class="run-list">${list||'<p class="run-empty">Создайте прогон, чтобы показать путь через развилки.</p>'}</div>${edit}${create}`;
+ if(panel.dataset.markup!==markup){panel.dataset.markup=markup;panel.innerHTML=markup;}
+ updateRunReadout();
+}
+
+function updateRunReadout(){
+ const play=$('#run-play');
+ if(!play)return;
+ const configuration=S.project.runs?.find(r=>r.id===runUI.selected);
+ if(!configuration)return;
+ const p=runPlayback(),path=p?.path||C.inspectRun(S.project,configuration);
+ const step=p?.index||0,total=path.stages.length,done=!!p&&step===total;
+ const current=path.stages[step],active=step?path.stages[step-1].active:[path.start?.id];
+ const names=(current?.legs.map(leg=>leg.to)||active.map(id=>path.sheet?.nodes.find(n=>n.id===id))).filter(Boolean);
+ const label=p?.playing?'Пауза':done?'Повторить':p?'Продолжить':'Запустить';
+ play.innerHTML=uiIcon(p?.playing?'pause':'run')+esc(label);
+ play.disabled=!!path.error||!total;
+ $('[data-run-action="step"]').disabled=play.disabled||done;
+ $('[data-run-action="reset"]').disabled=!p;
+ $('#run-progress').value=step;
+ $('#run-stage-title').textContent=path.error||(done?'Прогон завершён':p?pathTitle(names):configuration.title);
+ $('#run-stage-detail').textContent=path.error?'Маршрут можно исправить в редакторе.'
+  :done?pathTitle(names):p?current.legs.map(leg=>leg.edge.label).filter(Boolean).join(' · ')||path.sheet.title
+   :path.sheet?.title||'';
+ $('#run-status').textContent=p?`Шаг ${step} из ${total}`:`${configuration.steps.length} шагов`;
+}
+
+function pathTitle(nodes){
+ return [...new Set(nodes)].map(runTitle).join(' · ');
+}
+
+function onRunSettings(e){
+ if(e.target.id==='run-speed')runUI.speed=Number(e.target.value);
+ if(e.target.id==='run-follow'){
+  runUI.follow=e.target.checked;
+  if(runUI.follow&&runPlayback())showRunStart(runPlayback(),false);
+ }
+}
+
+async function handleRunPanelClick(e){
+ const item=e.target.closest('[data-run-id],[data-run-action]');
+ if(!item||item.disabled)return;
+ if(item.dataset.runId){
+  if(item.dataset.runId===runUI.selected)return;
+  clearRunPlayback();runUI.selected=item.dataset.runId;renderRunPanel();renderScene();
+  $('#run-panel [aria-pressed="true"]')?.focus({preventScroll:true});
+  return;
+ }
+ const run=S.project.runs?.find(r=>r.id===runUI.selected);
+ switch(item.dataset.runAction){
+  case 'new': return editRun();
+  case 'edit': return editRun(run);
+  case 'delete':
+   if(!S.readOnly&&run)confirmDialog('Удалить прогон?',run.title,()=>change(()=>{S.project.runs=S.project.runs.filter(r=>r!==run);}));
+   return;
+  case 'play':
+   if(runPlayback()?.playing)return pauseRun();
+   return startRun(run,true);
+  case 'step': return startRun(run,false);
+  case 'reset': clearRunPlayback();renderScene();updateRunReadout();
+ }
+}
+
+function editRun(existing){
+ if(S.readOnly)return;
+ if(!existing&&(S.project.runs?.length||0)>=C.runLimits.runs)return toast('Достигнут лимит прогонов документа');
+ if(runPlayback()?.playing)pauseRun();
+ const draft=existing?C.clone(existing):{id:C.uid('run'),pageId:page().id,startNodeId:'',title:'',steps:[]};
+ modal(existing?'Изменить прогон':'Новый прогон',
+  `<div class="run-editor"><label class="field">Название<input id="run-title" maxlength="${C.runLimits.title}" value="${esc(draft.title)}" placeholder="Например, На решение в КЦТ"></label><div id="run-route-editor"></div></div>`,
+  '<button type="button" id="run-save" class="primary">Сохранить прогон</button>',true);
+ const area=$('#run-route-editor'),saveButton=$('#run-save'),name=$('#run-title');
+ const canSave=()=>{const path=C.inspectRun(S.project,draft);saveButton.disabled=!name.value.trim()||!!path.error||!path.stages.length;};
+ function redraw(){
+  const path=C.inspectRun(S.project,draft),pg=path.sheet;
+  const startOption=`<option value="">Выберите блок</option>${(pg?.nodes||[]).map(n=>`<option value="${esc(n.id)}" ${n.id===draft.startNodeId?'selected':''}>${esc(runTitle(n))}</option>`).join('')}`;
+  const sheetOption=S.project.pages.map(pg=>`<option value="${esc(pg.id)}" ${pg.id===draft.pageId?'selected':''}>${esc(pg.title)}</option>`).join('');
+  area.innerHTML=`<div class="grid2"><label class="field">Лист<select id="run-page">${!pg?'<option value="">Выберите лист</option>':''}${sheetOption}</select></label><label class="field">Начальный блок<select id="run-start" ${pg?'':'disabled'}>${startOption}</select></label></div>
+   ${path.stages.length?`<ol class="run-editor-steps" aria-label="Шаги маршрута">${path.stages.map((stage,i)=>`<li><span>${esc(stage.legs.map(leg=>runTitle(leg.to)).join(' · '))}</span><button type="button" data-run-truncate="${i}" title="Убрать этот шаг и все следующие" aria-label="Убрать шаг ${i+1} и все следующие">×</button></li>`).join('')}</ol>`:''}
+   ${path.error&&draft.steps.length?`<p class="run-editor-alert">${esc(path.error)}. Удалите недоступные переходы.</p><button type="button" data-run-truncate="${path.stages.length}">Исправить с этого шага</button>`:''}
+   ${path.start&&!path.error&&path.choices.length&&draft.steps.length<C.runLimits.steps?`<fieldset class="run-choice-field"><legend>Следующие переходы</legend><p>Отметьте несколько связей, чтобы пройти их одновременно.</p><div class="run-choices">${path.choices.map((leg,i)=>`<label><input type="checkbox" value="${i}" data-run-choice><span><strong>${esc(runTitle(leg.to))}</strong><small>${esc([runTitle(leg.from),leg.edge.label].filter(Boolean).join(' · '))}</small></span></label>`).join('')}</div><button type="button" id="run-append">Добавить шаг</button></fieldset>`:''}`;
+  $('#run-page').onchange=e=>{draft.pageId=e.target.value;draft.startNodeId='';draft.steps=[];redraw();};
+  $('#run-start').onchange=e=>{draft.startNodeId=e.target.value;draft.steps=[];redraw();};
+  for(const b of $$('[data-run-truncate]',area))b.onclick=()=>{draft.steps.splice(Number(b.dataset.runTruncate));redraw();};
+  if($('#run-append'))$('#run-append').onclick=()=>{
+   const choices=$$('[data-run-choice]:checked',area).map(el=>path.choices[Number(el.value)]);
+   if(!choices.length)return toast('Выберите хотя бы один переход');
+   if(choices.length>C.runLimits.parallel)return toast('В одном шаге можно выбрать до '+C.runLimits.parallel+' переходов');
+   draft.steps.push(choices.map(leg=>({edgeId:leg.edge.id,from:leg.from.id})));redraw();
+  };
+  canSave();
+ }
+ name.oninput=canSave;
+ saveButton.onclick=caught(()=>{
+  if(saveButton.disabled||S.readOnly)return;
+  draft.title=name.value.trim();runUI.selected=draft.id;
+  change(()=>{
+   const runs=S.project.runs||[];
+   S.project.runs=existing?runs.map(r=>r.id===draft.id?draft:r):[...runs,draft];
+  });
+  closeModal();
+ });
+ redraw();name.focus();
+}
+
+function clearRunPlayback(){
+ const p=runUI.playback;
+ if(p?.raf)cancelAnimationFrame(p.raf);
+ runUI.playback=null;
+}
+
+function runPlayback(){
+ const p=runUI.playback;
+ if(p&&(S.home||p.project!==S.project||p.path.sheet!==page()||S.branchFocus))clearRunPlayback();
+ return runUI.playback;
+}
+
+function svgRunElement(tag,attrs){
+ const el=document.createElementNS('http://www.w3.org/2000/svg',tag);
+ for(const [key,value] of Object.entries(attrs))el.setAttribute(key,value);
+ return el;
+}
+
+function paintRunOverlay(){
+ const overlay=$('#run-overlay');
+ if(!overlay)return;
+ const p=runPlayback(),current=p?.path.stages[p.index],active=p?(p.path.stages[p.index-1]?.active||[p.path.start.id]):[];
+ if(!p&&!overlay.hasAttribute('data-active'))return;
+ overlay.toggleAttribute('data-active',!!p);
+ overlay.replaceChildren();
+ for(const el of $$('#nodes [data-node]')){
+  el.classList.toggle('run-visited',!!p?.visitedNodes.has(el.dataset.node));
+  el.classList.toggle('run-current',active.includes(el.dataset.node));
+ }
+ if(!p)return;
+ const tracks=new Map();
+ for(const id of p.visitedEdges){
+  const d=S.bundle?.routes.get(id)?.d;
+  if(d)overlay.append(svgRunElement('path',{d,class:'run-trace'}));
+ }
+ for(const leg of current?.legs||[]){
+  const route=S.bundle?.routes.get(leg.edge.id);
+  if(!route?.d)continue;
+  const path=svgRunElement('path',{d:route.hitD||route.d,class:'run-flight'});
+  const dot=svgRunElement('circle',{class:'run-marker',r:6});
+  overlay.append(path,dot);
+  tracks.set(leg,{path,dot,length:path.getTotalLength()});
+ }
+ p.tracks=tracks;
+ drawRunMarkers(p);
+}
+
+function drawRunMarkers(p){
+ const progress=Math.min(1,p.elapsed/p.duration),points=[];
+ for(const [leg,{path,dot,length}] of p.tracks){
+  const at=path.getPointAtLength(length*(leg.reverse?1-progress:progress));
+  dot.setAttribute('cx',at.x);dot.setAttribute('cy',at.y);
+  points.push(at);
+ }
+ return points;
+}
+
+function followRunPoints(points,snap=false){
+ if(!runUI.follow||!points.length||S.drag||S.dragMoving)return;
+ const stage=$('#stage'),z=S.view.z;
+ const x=points.reduce((sum,p)=>sum+p.x,0)/points.length;
+ const y=points.reduce((sum,p)=>sum+p.y,0)/points.length;
+ const sx=x*z+S.view.x,sy=y*z+S.view.y;
+ const w=stage.clientWidth,h=stage.clientHeight;
+ if(snap)S.view={z,x:w*.49-x*z,y:h*.46-y*z};
+ else{
+  S.view.x+=(Math.min(w*.73,Math.max(w*.27,sx))-sx)*.18;
+  S.view.y+=(Math.min(h*.69,Math.max(h*.27,sy))-sy)*.18;
+ }
+ transform();
+}
+
+function showRunStart(p,zoom){
+ if(!runUI.follow)return;
+ if(zoom)S.view.z=Math.max(.90,Math.min(1.2,S.view.z));
+ const active=p.path.stages[p.index-1]?.active||[p.path.start.id],ids=new Set(active);
+ const targets=S.display.nodes.filter(n=>ids.has(n.id));
+ followRunPoints(targets.map(n=>({x:n.x+n.w/2,y:n.y+n.h/2})),true);
+}
+
+function nextRunStep(p){
+ const step=p.path.stages[p.index];
+ if(!step)return;
+ for(const {edge,to} of step.legs){p.visitedEdges.add(edge.id);p.visitedNodes.add(to.id);}
+ p.index++;p.elapsed=0;p.last=0;
+ if(p.index===p.path.stages.length)p.playing=false;
+ paintRunOverlay();sizeRunStep(p);updateRunReadout();
+}
+
+function sizeRunStep(p){
+ const length=Math.max(0,...[...p.tracks.values()].map(track=>track.length));
+ p.duration=p.reduced?450:Math.max(520,Math.min(1700,550+length*.65));
+}
+
+function runFrame(now){
+ const p=runPlayback();
+ if(!p?.playing)return;
+ p.raf=0;
+ if(p.last)p.elapsed+=Math.min(100,now-p.last)*runUI.speed;
+ p.last=now;
+ if(p.elapsed>=p.duration){nextRunStep(p);if(p.reduced)showRunStart(p,false);}
+ else if(!p.reduced)followRunPoints(drawRunMarkers(p));
+ if(p.playing)p.raf=requestAnimationFrame(runFrame);
+}
+
+function pauseRun(){
+ const p=runPlayback();
+ if(!p)return;
+ cancelAnimationFrame(p.raf);p.raf=0;p.playing=false;p.last=0;updateRunReadout();
+}
+
+function startRun(configuration,play){
+ if(!configuration)return;
+ if(!play)pauseRun();
+ let p=runPlayback();
+ if(!p||p.configuration!==configuration||p.index===p.path.stages.length){
+  const path=C.inspectRun(S.project,configuration);
+  if(path.error||!path.stages.length)return toast(path.error||'Добавьте переход в маршрут');
+  const index=S.project.pages.indexOf(path.sheet);
+  switchPage(index);
+  p={project:S.project,configuration,path,index:0,elapsed:0,last:0,raf:0,playing:false,
+   duration:600,reduced:window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+   visitedNodes:new Set([path.start.id]),visitedEdges:new Set(),tracks:new Map()};
+  runUI.playback=p;render();fit();sizeRunStep(p);showRunStart(p,true);
+ }
+ if(!play){nextRunStep(p);showRunStart(p,false);return;}
+ p.playing=true;p.last=0;updateRunReadout();
+ if(!p.raf)p.raf=requestAnimationFrame(runFrame);
+}
+
+window.Studio={ready:editorReady,reserveDocumentOpen,activeCell,applyTheme,selectedConnectionIds,selectionV075,deleteSelectionV075,selectFolder,onChange,nodeStateIcons,requestMaterialRemoval,projectMenu,closeProject,collapsedRows,toggleRow,setRowControl,jumpToNode,editMaterial,openRecentDocument,locationText,deleteSegment,measureNode,materialChip,fileIcon,fileType,materialLocation,materialExternal,jumpToCell,measureCell,setTool,renderInspector,renderEdges,uiIcon,pagesDialog,searchDialog,checkHTTP,checkMaterial,checkAllMaterials,materialCheckDialog,renderGuides,highlightCommonPorts,state:S,Core:C,init,home,render,fit,focusNode,action,save,saveDocument,makeNode,addNode,tableEditor,registry,preparePrint,exportHTML,exportXML,exportJSON,portableProject,openMaterial,showNodeMaterials,change,uploadFile,assetURL,normalize,cleanHTML,groupsDialog,groupEditor,arrangeSelection,addRoutePoint,resetRoute,nudge,parseDocumentText,openDocumentFile,activateDocument,buildDocumentHTML,bindFolder,resolveMaterial,toggleNode,connectPorts,choosePort,undo,redo,combineSelected,tableHTML,sceneBounds,get document(){return DOC;}};
 init();

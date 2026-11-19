@@ -1829,10 +1829,91 @@ Core.preflightTableChange=function(pg,id,table){
  return {ports,removed,page:next};
 };
 
+// A run is an ordered set of transitions over the actual connections on one sheet.
+// Each step advances the sources it names and leaves the other active branches in place.
+Core.runLimits={runs:200,steps:512,parallel:32,title:120};
+
+function runLeg(edge,from,nodes){
+ if(edge.source===from&&(edge.arrow!==false||!edge.arrowStart)&&nodes.has(edge.target)){
+  return {edge,from:nodes.get(from),to:nodes.get(edge.target),reverse:false};
+ }
+ if(edge.target===from&&edge.arrowStart&&nodes.has(edge.source)){
+  return {edge,from:nodes.get(from),to:nodes.get(edge.source),reverse:true};
+ }
+ return null;
+}
+
+Core.inspectRun=function(project,run){
+ const sheet=project?.pages?.find(p=>p.id===run.pageId);
+ const result={sheet,start:null,stages:[],active:[],choices:[],error:''};
+ if(!sheet){result.error='Лист прогона удалён';return result;}
+ const nodes=new Map(sheet.nodes.map(n=>[n.id,n]));
+ const edges=new Map(sheet.edges.map(e=>[e.id,e]));
+ result.start=nodes.get(run.startNodeId);
+ if(!result.start){result.error='Выберите начальный блок';return result;}
+ let active=new Set([result.start.id]);
+ for(const step of run.steps){
+  const legs=step.map(({edgeId,from})=>active.has(from)&&edges.has(edgeId)?runLeg(edges.get(edgeId),from,nodes):null);
+  if(legs.some(leg=>!leg)){
+   result.error=`Шаг ${result.stages.length+1} больше не связан с предыдущим`;
+   break;
+  }
+  for(const leg of legs)active.delete(leg.from.id);
+  for(const leg of legs)active.add(leg.to.id);
+  result.stages.push({legs,active:[...active]});
+ }
+ result.active=[...active].map(id=>nodes.get(id));
+ for(const edge of sheet.edges){
+  for(const id of new Set([edge.source,edge.target])){
+   const leg=active.has(id)&&runLeg(edge,id,nodes);
+   if(leg)result.choices.push(leg);
+  }
+ }
+ return result;
+};
+
+Core.packDocumentXML=function(title,html){
+ const label=String(title).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+ const payload=html.replace(/\]\]>/g,']]]]><![CDATA[>');
+ return '<?xml version="1.0" encoding="UTF-8"?>\n'
+  +'<html xmlns="http://www.w3.org/1999/xhtml" lang="ru" data-pipeline-studio="1">'
+  +'<head><title>'+label+'</title><meta name="viewport" content="width=device-width,initial-scale=1"/>'
+  +'<style>html,body,iframe{width:100%;height:100%;margin:0;border:0;overflow:hidden;display:block}</style></head>'
+  +'<body><iframe id="studio-frame" title="Pipeline Studio"></iframe>'
+  +'<script id="pipeline-viewer" type="application/x-pipeline-studio+html"><![CDATA['+payload+']]></script>'
+  +'<script><![CDATA[document.getElementById("studio-frame").srcdoc=document.getElementById("pipeline-viewer").textContent;]]></script></body></html>';
+};
+
+Core.validateRuns=function(runs){
+ if(runs===undefined)return;
+ const limits=Core.runLimits,ids=new Set();
+ const id=value=>typeof value==='string'&&value.length>0&&value.length<=200;
+ if(!Array.isArray(runs)||runs.length>limits.runs)throw Error('Некорректный список прогонов');
+ for(const run of runs){
+  if(!run||!id(run.id)||ids.has(run.id)||!id(run.pageId)||!id(run.startNodeId)||
+     typeof run.title!=='string'||!run.title.trim()||run.title.length>limits.title||
+     !Array.isArray(run.steps)||!run.steps.length||run.steps.length>limits.steps){
+   throw Error('Некорректный прогон');
+  }
+  ids.add(run.id);
+  for(const step of run.steps){
+   if(!Array.isArray(step)||!step.length||step.length>limits.parallel)throw Error('Некорректный шаг прогона');
+   const unique=new Set();
+   for(const leg of step){
+    if(!leg||!id(leg.from)||!id(leg.edgeId))throw Error('Некорректный переход прогона');
+    const key=JSON.stringify([leg.from,leg.edgeId]);
+    if(unique.has(key))throw Error('Повтор перехода в шаге прогона');
+    unique.add(key);
+   }
+  }
+ }
+};
+
 // The editor and loader share these presentation limits.
 Core.presentationRanges={fontSize:[1,1000],width:[0,1000],w:[1,1e7],h:[1,1e7]};
 // Validate values before any legacy coercion or interpolation into HTML/SVG.
 Core.validatePresentation=function(project){
+ Core.validateRuns(project.runs);
  const number=(obj,key,min,max,legacyString=false)=>{
   if(obj[key]===undefined)return;
   let value=obj[key];
