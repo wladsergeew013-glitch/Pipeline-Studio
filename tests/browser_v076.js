@@ -9,7 +9,7 @@ const reset=async()=>p.evaluate(async d=>{await Studio.activateDocument(d,{name:
 const combSelected=()=>p.evaluate(()=>{const s=Studio.state;return s.selectedBus==='comb'&&s.selectedBuses.has('comb')&&s.selectedEdge===null&&s.selectedEdges.size===0});
 const hit=async(id,shift=false)=>p.locator(`.edge-hit[data-edge=${id}]`).dispatchEvent('pointerdown',{button:0,shiftKey:shift});
 try{await p.goto('file:///'+B.replaceAll('\\','/')+'/Pipeline-Studio.html');await p.waitForSelector('#home-new');
-check('Start screen has New and Open HTML commands without project-folder navigation',await p.locator('.home-actions button').count()===2&&await p.locator('#home-open').innerText().then(t=>t.includes('Открыть HTML'))&&await p.locator('#home-folder').count()===0&&await p.evaluate(()=>Studio.openProjectFolder===undefined));
+check('Start screen opens HTML, XML and JSON without project-folder navigation',await p.locator('.home-actions button').count()===2&&await p.locator('#home-open').innerText().then(t=>t.includes('Открыть документ')&&t.includes('HTML, XML или JSON'))&&await p.locator('#home-folder').count()===0&&await p.evaluate(()=>Studio.openProjectFolder===undefined));
 await reset();await hit('a');check('Clicking a comb member selects the comb as one object',await combSelected());
 check('Symmetry is a separate comb section',await p.locator('[data-section="bus:bus-symmetry"] #bus-auto-align').count()===1&&await p.locator('[data-section="bus:bus-geometry"] #bus-auto-align').count()===0);
 check('A selected comb has a spine handle and no individual branch segment grips',await p.locator('[data-bus-handle=comb]').count()===1&&await p.locator('[data-segment-edge=a]').count()===0);
