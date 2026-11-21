@@ -1979,22 +1979,23 @@ Core.setNodeLocks=function(pg,ids,locked,view=null){
  return out;
 };
 
-// This projection belongs to the canvas. It never edits the page or its folds.
-Core.isolateCellBranch=function(pg,target,compact){
- const hit=Core.cellTarget({pages:[pg]},target);
- if(!hit)return null;
- const {node:root,row,col,cell}=hit,table=root.table;
- const span=cell.rowspan||1,rowIds=table.rowIds.slice(row,row+span),selectedRows=new Set(rowIds);
- const rowPorts=Core.ports(root).filter(p=>selectedRows.has(p.rowId));
+// Branch views use the expanded layout and leave the page and its folds intact.
+Core.branchProjection=function(pg,target,compact,mode='only'){
+ if(pg.id!==target.pageId)return null;
+ const root=pg.nodes.find(n=>n.id===target.nodeId),cellTarget=target.rowId||target.colId;
+ const hit=cellTarget?Core.cellTarget({pages:[pg]},target):null;
+ if(!root||cellTarget&&!hit)return null;
+ const span=hit?(hit.cell.rowspan||1):0,rowIds=hit?root.table.rowIds.slice(hit.row,hit.row+span):[];
+ const selectedRows=new Set(rowIds),rowPorts=hit?Core.ports(root).filter(p=>selectedRows.has(p.rowId)):[];
  const portIds=new Set(rowPorts.map(p=>p.id));
- const links=pg.edges.filter(e=>(e.source!==root.id||portIds.has(e.sourcePort))
-   &&(e.target!==root.id||portIds.has(e.targetPort)));
+ const links=hit?pg.edges.filter(e=>(e.source!==root.id||portIds.has(e.sourcePort))
+   &&(e.target!==root.id||portIds.has(e.targetPort))):pg.edges;
  const children=new Map(pg.nodes.map(n=>[n.id,[]]));
  for(const e of links){
   const relationship=Core.edgeRelationship(pg,e);
   if(relationship)children.get(relationship.parent).push(relationship);
  }
- for(const n of pg.nodes)if(n.anchorId!==root.id&&children.has(n.anchorId)){
+ for(const n of pg.nodes)if((!hit||n.anchorId!==root.id)&&children.has(n.anchorId)){
   children.get(n.anchorId).push({child:n.id,annotation:false});
  }
  const reached=new Set([root.id]),queue=[root.id],annotations=new Set();
@@ -2006,31 +2007,40 @@ Core.isolateCellBranch=function(pg,target,compact){
 
  // Derive positions from the full expanded page so unrelated visibility
  // changes cannot rearrange the branch or affect the editor's coordinates.
- const display=Core.display(pg,new Set(),compact),tableView=display.nodes.find(n=>n.id===root.id);
- if(!tableView)return null;
- const metrics=Core.tableMetrics(tableView);
- const sum=values=>values.reduce((total,value)=>total+value,0);
- const widthScale=(tableView.w-3)/sum(metrics.widths);
- const width=Math.max(32,sum(metrics.widths.slice(col,col+(cell.colspan||1)))*widthScale);
- const isolated={
-  ...tableView,
-  x:tableView.x+sum(metrics.widths.slice(0,col))*widthScale,
-  y:tableView.y+sum(metrics.heights.slice(0,row)),
-  w:width+3,icons:[],materials:[],ports:rowPorts,
-  table:{
-   cells:[[{...cell,colspan:1}],...rowIds.slice(1).map(()=>[null])],
-   widths:[width],heights:metrics.heights.slice(row,row+span),
-   rowIds,colIds:[table.colIds[col]],wordWrap:table.wordWrap
-  }
- };
- isolated.h=Core.tableMetrics(isolated).total;
- const nodes=display.nodes.filter(n=>reached.has(n.id)).map(n=>n.id===root.id?isolated:n);
- const visible=new Set(nodes.map(n=>n.id)),linkIds=new Set(links.map(e=>e.id));
- let edges=display.edges.filter(e=>linkIds.has(e.id)&&visible.has(e.source)&&visible.has(e.target));
+ const display=Core.display(pg,new Set(),compact);
+ const linkIds=new Set(links.map(e=>e.id));
+ const inBranch=e=>linkIds.has(e.id)&&reached.has(e.source)&&reached.has(e.target);
+ const drawingInBranch=d=>(!hit||d.anchor!==root.id)&&reached.has(d.anchor);
+ let edges=display.edges.filter(inBranch);
+ if(mode!=='only'){
+  const busIds=new Set(edges.map(e=>e.bus).filter(Boolean));
+  const muted=inBranch=>mode==='fade-branch'?inBranch:!inBranch;
+  const mark=(list,includes)=>list.map(item=>({...item,branchMuted:muted(includes(item))}));
+  return {...display,nodes:mark(display.nodes,n=>reached.has(n.id)),edges:mark(display.edges,inBranch),
+   buses:mark(display.buses,b=>busIds.has(b.id)),drawings:mark(display.drawings||pg.drawings||[],drawingInBranch)};
+ }
+ let nodes=display.nodes.filter(n=>reached.has(n.id));
+ if(hit){
+  const tableView=nodes.find(n=>n.id===root.id),{row,col,cell}=hit,table=root.table;
+  if(!tableView)return null;
+  const metrics=Core.tableMetrics(tableView);
+  const sum=values=>values.reduce((total,value)=>total+value,0);
+  const widthScale=(tableView.w-3)/sum(metrics.widths);
+  const width=Math.max(32,sum(metrics.widths.slice(col,col+(cell.colspan||1)))*widthScale);
+  const isolated={...tableView,x:tableView.x+sum(metrics.widths.slice(0,col))*widthScale,
+   y:tableView.y+sum(metrics.heights.slice(0,row)),w:width+3,icons:[],materials:[],ports:rowPorts,
+   table:{cells:[[{...cell,colspan:1}],...rowIds.slice(1).map(()=>[null])],widths:[width],
+    heights:metrics.heights.slice(row,row+span),rowIds,colIds:[table.colIds[col]],wordWrap:table.wordWrap}};
+  isolated.h=Core.tableMetrics(isolated).total;
+  nodes=nodes.map(n=>n.id===root.id?isolated:n);
+ }
  const busCounts=new Map();
  for(const e of edges)if(e.bus)busCounts.set(e.bus,(busCounts.get(e.bus)||0)+1);
  const buses=display.buses.filter(b=>busCounts.get(b.id)>=2),busIds=new Set(buses.map(b=>b.id));
  edges=edges.map(e=>e.bus&&!busIds.has(e.bus)?{...e,bus:undefined}:e);
- const drawings=(pg.drawings||[]).filter(d=>d.anchor!==root.id&&visible.has(d.anchor));
+ const drawings=(display.drawings||pg.drawings||[]).filter(drawingInBranch);
  return {nodes,edges,buses,frames:[],drawings};
+};
+Core.isolateCellBranch=function(pg,target,compact){
+ return target?.rowId&&target.colId?Core.branchProjection(pg,target,compact):null;
 };

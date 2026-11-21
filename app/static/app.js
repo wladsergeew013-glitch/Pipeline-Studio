@@ -341,7 +341,7 @@ async function legacyUploadFile(file,replaceId,options={}){
 }
 async function v4InsertImages(files,point=nodeCenter()){
  for(let i=0;i<files.length;i++){const m=await uploadFile(files[i]);const image=new Image();image.src=assetURL(m);try{await image.decode();}catch{}const w=Math.min(250,image.naturalWidth||200),h=w*(image.naturalHeight||200)/(image.naturalWidth||200);change(()=>{const n=makeNode('image',point.x+i*40,point.y+i*40);n.title=m.title;n.w=w;n.h=h;n.imageMaterial=m.id;n.materials=[];n.fill='transparent';n.stroke='transparent';page().nodes.push(n);S.selected=new Set([n.id]);S.compact=false;collapsed().clear();});}fit([...S.selected]);}
-function usage(id){const out=[];S.project.pages.forEach((p,i)=>p.nodes.forEach(n=>{if((n.materials||[]).includes(id)||n.imageMaterial===id||n.icons?.some(ic=>ic.material===id)||n.table?.cells.flat().some(c=>C.cellMaterialIds(c).includes(id)))out.push({pageIndex:i,page:p.title,id:n.id,title:n.title});}));return out;}
+function usage(id){const out=[];S.project.pages.forEach((p,i)=>p.nodes.forEach(n=>{if((n.materials||[]).includes(id)||C.inlineMaterialIds(n).includes(id)||n.imageMaterial===id||n.icons?.some(ic=>ic.material===id)||n.table?.cells.flat().some(c=>C.cellMaterialIds(c).includes(id)))out.push({pageIndex:i,page:p.title,id:n.id,title:n.title});}));return out;}
 function legacyRegistry(attachNodeId=null){
  const materials=S.project.materials;modal(attachNodeId?'Прикрепить материал':'Реестр материалов',`<div class="registry-tools row"><input id="registry-search" placeholder="Поиск по названию или адресу…"><div class="spacer"></div>${S.readOnly?'':'<button id="material-relink">Перепривязка адресов</button><button id="material-new-link">+ Ссылка</button><button id="material-upload" class="primary">Загрузить файлы</button>'}</div><div class="notice">Блоки ссылаются на ID материала. «Заменить файл» или изменение адреса в реестре обновляет источник сразу для всех его привязок. Внешние адреса не проверяются автоматически.</div><div style="overflow:auto"><table class="registry"><thead><tr><th>Материал</th><th>Тип / версия</th><th>Привязки</th><th>Действия</th></tr></thead><tbody id="registry-body"></tbody></table></div>`);
  function rows(query=''){const filtered=materials.filter(m=>(m.title+' '+(m.url||'')).toLowerCase().includes(query.toLowerCase()));$('#registry-body').innerHTML=filtered.map(m=>`<tr><td class="title-col">${sign(m.kind)} &nbsp; ${esc(m.title)}<small style="display:block;font-weight:400">${m.asset?(assetURL(m)?'В хранилище приложения':'Файл недоступен в этом браузере'):esc(m.url||'Без адреса')}</small></td><td><span class="badge">${esc(m.kind)}</span><br><small>версия ${m.version||1}</small></td><td><button data-usage="${esc(m.id)}">${usage(m.id).length} блоков</button></td><td><div class="row wrap"><button data-mopen="${esc(m.id)}">Открыть</button>${S.readOnly?'':`<button data-medit="${esc(m.id)}">Изменить</button><button data-mreplace="${esc(m.id)}">Заменить файл</button>`}${attachNodeId?`<button class="primary" data-mattach="${esc(m.id)}">Прикрепить</button>`:''}</div></td></tr>`).join('')||'<tr><td colspan="4">Материалы не найдены</td></tr>';
@@ -507,7 +507,7 @@ function legacyBulkRelink(){
 
 /* 0.3: The editor is an application. A document and its referenced files are separate.
    All filesystem access is explicitly granted by the user; imported HTML is parsed, never run. */
-const RELEASE='0.7.23';
+const RELEASE='0.7.24';
 function desktopAvailable(){return typeof window.STUDIO_DESKTOP?.call==='function';}
 function nativeAvailable(){return desktopAvailable()||!!window.STUDIO_NATIVE?.token&&location.hostname==='127.0.0.1';}
 async function nativeCall(route,data={}){if(desktopAvailable())return window.STUDIO_DESKTOP.call(route,data);if(!nativeAvailable())throw Error('Открытие оригинала доступно в Pipeline Studio.exe');const response=await fetch('/native/'+route,{method:'POST',headers:{'Content-Type':'application/json','X-Studio-Token':window.STUDIO_NATIVE.token},body:JSON.stringify(data),cache:'no-store'});const result=await response.json();if(!response.ok)throw Error(result.error||'Не удалось обратиться к исходному файлу');return result;}
@@ -596,7 +596,7 @@ async function activateDocument(project,{name='',handle=null,key=null,server=fal
  try{await hydrateAssets(prepared,server,assets);if(token!==documentOpenVersion)return discard();commitActiveEditors();while(S.dirty&&!S.readOnly){await save();if(token!==documentOpenVersion)return discard();}}catch(e){discard();throw e;}
  resetBranchFocus();closeFilePopover();closeNodeStatus();finishEdgeLabel(false);closeModal();clearTimeout(saveTimer);for(const u of DOC.urls.values())URL.revokeObjectURL(u);for(const u of liveAssets.values())URL.revokeObjectURL(u);DOC=next;liveAssets=assets;
  S.project=prepared;S.server=server;S.readOnly=readOnly;S.locked=readOnly;S.home=false;S.view={x:60,y:60,z:1};S.pageIndex=Math.max(0,Math.min(prepared.pages.length-1,prepared.viewState?.page||0));
- S.history=[];S.redo=[];S.selected=new Set();S.selectedEdges=new Set();S.selectedEdge=S.selectedBus=S.selectedDrawing=null;S.selectedDrawings?.clear();S.selectedBuses?.clear();S.pendingPort=null;S.addingBus=null;S.materialChecks=new Map();S.popover=null;S.guides=[];S.iconEdit=false;S.placement=null;S.addingBusPair=null;S.search='';S.folded=new Set();S.collapsed=Object.fromEntries(Object.entries(prepared.viewState?.collapsed||{}).map(([k,v])=>[k,new Set(v)]));S.tool='select';S.quickCell=null;quickEdit=null;S.connectionCycle=null;if(S.propertyPainter)S.propertyPainter.source=null;
+ S.history=[];S.redo=[];S.selected=new Set();S.selectedEdges=new Set();S.selectedEdge=S.selectedBus=S.selectedDrawing=null;S.selectedDrawings?.clear();S.selectedBuses?.clear();S.pendingPort=null;S.addingBus=null;S.materialChecks=new Map();S.materialTab=null;S.popover=null;S.guides=[];S.iconEdit=false;S.placement=null;S.addingBusPair=null;S.search='';S.folded=new Set();S.collapsed=Object.fromEntries(Object.entries(prepared.viewState?.collapsed||{}).map(([k,v])=>[k,new Set(v)]));S.tool='select';S.space=false;S.quickCell=null;quickEdit=null;S.connectionCycle=null;if(S.propertyPainter)S.propertyPainter.source=null;
  S.collapsedRows=rows;S.rowControls=rowControls;S.compact=prepared.viewState?.compact!==false;S.dirty=false;S.fileDirty=!readOnly&&(fileDirty||!name||(project.schemaVersion||1)<3);
  clearRunPlayback();runUI.selected='';runUI.open=readOnly&&!!prepared.runs?.length;if(runUI.open)S.rightHidden=false;
  renderShell();render();fit();if(!readOnly){S.dirty=true;await save();}return prepared;
@@ -867,7 +867,7 @@ function renderScene(){
  if(S.home||!S.project||!$('#nodes'))return;
  const pg=page(),checked=S.dragMovement?.feedback;
  if(S.branchFocus){
-  S.display=C.isolateCellBranch(pg,S.branchFocus.target,S.compact);
+  S.display=C.branchProjection(pg,S.branchFocus.target,S.compact,S.branchFocus.mode);
   if(!S.display){resetBranchFocus();render();return;}
  }else{
   S.display=runPlayback()?C.display(pg,new Set(),false,new Set(),{collapsedRows:new Set()})
@@ -876,7 +876,7 @@ function renderScene(){
  }
  $('#frames').innerHTML='';const existing=new Map([...$('#nodes').children].map(el=>[el.dataset.node,el]));
  if(S.dragMoving&&existing.size===S.display.nodes.length&&S.display.nodes.every(n=>existing.has(n.id))){for(const n of S.display.nodes){const el=existing.get(n.id);el.style.left=n.x+'px';el.style.top=n.y+'px';el.style.width=n.w+'px';el.style.height=n.h+'px';}}
- else{const container=$('#nodes'),keep=new Set();for(const n of S.display.nodes){const html=nodeHTML(n);let el=existing.get(n.id);if(!el||nodeMarkup.get(el)!==html){const template=document.createElement('template');template.innerHTML=html;const next=template.content.firstElementChild;nodeMarkup.set(next,html);if(el)el.replaceWith(next);else container.append(next);el=next;}keep.add(n.id);}for(const [id,el] of existing)if(!keep.has(id))el.remove();}renderEdges();renderInk();transform();updateConnectStatus();highlightCommonPorts();renderGuides();paintRunOverlay();}
+ else{const container=$('#nodes'),keep=new Set();for(const n of S.display.nodes){const html=nodeHTML(n);let el=existing.get(n.id);if(!el||nodeMarkup.get(el)!==html){const template=document.createElement('template');template.innerHTML=html;const next=template.content.firstElementChild;nodeMarkup.set(next,html);if(el)el.replaceWith(next);else container.append(next);el=next;}el.classList.toggle('branch-muted',!!n.branchMuted);keep.add(n.id);}for(const [id,el] of existing)if(!keep.has(id))el.remove();}renderEdges();renderInk();transform();updateConnectStatus();highlightCommonPorts();renderGuides();paintRunOverlay();}
 function v4RenderEdges(){
  if(!S.display||!$('#edges'))return;const bundle=C.bundleRoutes(S.display);S.bundle=bundle;
  const defs='<defs><marker id="arrowhead" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M0 0L8 4L0 8Z" fill="context-stroke"/></marker></defs>';
@@ -1045,7 +1045,10 @@ function v3OnKey(e){
  if(mod&&key==='KeyS'){e.preventDefault();if(currentModal){toast('Сначала примените или отмените изменения в открытом окне.');return;}if(editing)editing.dispatchEvent(new Event('change',{bubbles:true}));saveDocument(e.shiftKey).catch(err=>toast(err.message,9000));return;}
  if(currentModal||editing)return;
  if(e.target?.matches?.('[data-port]')&&(e.key==='Enter'||e.key===' ')){e.preventDefault();choosePort(e.target.dataset.owner,e.target.dataset.port);return;}
- if(e.code==='Space'){e.preventDefault();S.space=true;return;}
+ if(e.code==='Space'){
+  if(e.target?.closest?.('button,a,summary,[role="button"],[role="tab"]'))return;
+  e.preventDefault();if(!e.repeat)S.space=true;return;
+ }
  if(mod&&key==='KeyS'){e.preventDefault();saveDocument(e.shiftKey).catch(err=>toast(err.message,9000));return;}
  if(mod&&key==='KeyO'){e.preventDefault();openDocumentPicker().catch(err=>toast(err.message));return;}
  if(S.readOnly)return;
@@ -1065,21 +1068,27 @@ function v4Nudge(key,step){
  });
 }
 let closeCanvasContext=null;
+const branchModes=[
+ ['only','Показать только ветку'],
+ ['fade-others','Приглушить остальную схему'],
+ ['fade-branch','Сделать ветку полупрозрачной']
+];
 function resetBranchFocus(){
  closeCanvasContext?.();
  if(!S.branchFocus)return;
  S.view=S.branchFocus.fullView;
  S.branchFocus=null;
 }
-function enterBranchFocus(target){
+function enterBranchFocus(target,mode){
  commitActiveEditors();
- if(!C.cellTarget(S.project,target)||page().id!==target.pageId)return;
+ if(!target||page().id!==target.pageId||!page().nodes.some(n=>n.id===target.nodeId))return;
  closePopover();closeNodeStatus();stopPlacement();
  $('#stage').style.removeProperty('cursor');
  S.pendingPort=S.addingBus=S.addingBusPair=null;
- S.guides=[];S.connectionCycle=null;
- S.branchFocus={target,fullView:S.branchFocus?.fullView||{...S.view}};
- render();fit();
+ S.guides=[];S.connectionCycle=null;S.space=false;
+ S.branchFocus={target,mode,fullView:S.branchFocus?.fullView||{...S.view}};
+ if(mode!=='only')S.view={...S.branchFocus.fullView};
+ render();if(mode==='only')fit();
  $('[data-action="exit-branch-focus"]')?.focus({preventScroll:true});
 }
 function exitBranchFocus(){
@@ -1089,15 +1098,17 @@ function exitBranchFocus(){
 function contextMenu(e){
  if(currentModal)return;
  e.preventDefault();closeCanvasContext?.();
- const nd=e.target.closest('[data-node]'),td=e.target.closest('[data-table-cell]');
+ const nd=e.target.closest('[data-node]'),td=e.target.closest('[data-table-cell]'),ed=e.target.closest('[data-edge]');
  const cell=nd&&td?{pageId:page().id,nodeId:nd.dataset.node,rowId:td.dataset.rowId,colId:td.dataset.colId}:null;
- const focusChoice=cell&&['isolate-branch','Изолировать ячейку и ветку'];
+ const edge=ed&&page().edges.find(e=>e.id===ed.dataset.edge),branchNode=nd?.dataset.node||(edge&&C.edgeRelationship(page(),edge)?.child);
+ const target=cell||(branchNode?{pageId:page().id,nodeId:branchNode}:S.branchFocus?.target);
+ const focusChoice=target&&['isolate-branch','Изолировать ветку'];
  if(S.readOnly&&!focusChoice&&!S.branchFocus)return;
  let choices;
  if(S.readOnly||S.branchFocus){
   choices=[focusChoice,S.branchFocus&&['exit-branch-focus','Показать всю схему']].filter(Boolean);
  }else{
- const ed=e.target.closest('[data-edge]'),bus=busAtTarget(e.target);
+ const bus=busAtTarget(e.target);
  if(nd){const n=page().nodes.find(n=>n.id===nd.dataset.node);if(!n)return;if(!S.selected.has(n.id))S.selected=new Set([n.id]);S.selectedEdge=S.selectedBus=null;S.selectedEdges.clear();renderInspector();choices=[[n.table?'table-edit':'edit-text',n.table?'Редактировать таблицу':'Редактировать текст'],['attach','Прикрепить материалы'],['enable-collapse',n.collapsible?'Отключить сворачивание цепочки':'Включить сворачивание цепочки'],[n.locked?'unlock':'lock',n.locked?'Снять фиксацию':'Зафиксировать положение'],['duplicate','Дублировать'],['align-menu','Режимы привязки…'],['delete','Удалить']];}
  else if(bus){selectComb(bus);choices=[['bus-add-existing','Добавить существующие связи'],['dissolve-bus','Разделить гребёнку, сохранив связи']];}
  else if(ed){S.selectedEdge=ed.dataset.edge;S.selected.clear();renderInspector();choices=[['combine-auto','Объединить связи в гребёнку'],['route-add','Добавить точку маршрута'],['route-clear','Сбросить маршрут'],['delete','Удалить связь']];}
@@ -1106,38 +1117,82 @@ function contextMenu(e){
  }
  const pt=worldPoint(e),menu=document.createElement('div'),context=operationContext();
  menu.id='canvas-context';menu.className='canvas-context';
- menu.innerHTML=choices.map(([id,text])=>`<button type="button" data-context="${id}">${text}</button>`).join('');
+ menu.innerHTML=choices.map(([id,label])=>id==='isolate-branch'
+  ?`<button type="button" data-context="${id}" aria-expanded="false" aria-controls="branch-mode-list">${label}${uiIcon('chevronDown')}</button><div id="branch-mode-list" class="branch-mode-list" role="group" aria-label="Режим изоляции" hidden>${branchModes.map(([mode,name])=>`<button type="button" data-context="branch-mode" data-branch-mode="${mode}">${name}</button>`).join('')}</div>`
+  :`<button type="button" data-context="${id}">${label}</button>`).join('');
  document.body.append(menu);
- const box=menu.getBoundingClientRect();
- menu.style.left=Math.max(8,Math.min(e.clientX,innerWidth-box.width-8))+'px';
- menu.style.top=Math.max(8,Math.min(e.clientY,innerHeight-box.height-8))+'px';
+ const position=()=>{const box=menu.getBoundingClientRect();
+  menu.style.left=Math.max(8,Math.min(e.clientX,innerWidth-box.width-8))+'px';
+  menu.style.top=Math.max(8,Math.min(e.clientY,innerHeight-box.height-8))+'px';};
+ position();
  const closeOutside=event=>{if(!menu.contains(event.target))closeCanvasContext?.();};
  closeCanvasContext=()=>{
   menu.remove();document.removeEventListener('pointerdown',closeOutside,true);closeCanvasContext=null;
  };
  document.addEventListener('pointerdown',closeOutside,true);
  $$('[data-context]',menu).forEach(b=>b.onclick=caught(async()=>{
-  const cmd=b.dataset.context;closeCanvasContext?.();
+  const cmd=b.dataset.context;
+  if(cmd==='isolate-branch'){
+   const list=$('#branch-mode-list',menu);list.hidden=!list.hidden;
+   b.setAttribute('aria-expanded',String(!list.hidden));position();if(!list.hidden)list.firstElementChild.focus();return;
+  }
+  closeCanvasContext?.();
   if(!contextCurrent(context,true))return;
-  if(cmd==='isolate-branch')enterBranchFocus(cell);
+  if(cmd==='branch-mode')enterBranchFocus(target,b.dataset.branchMode);
   else if(cmd.startsWith('context-'))addNode(cmd.slice(8),pt);
   else if(cmd==='enable-collapse'){
    const n=selected();change(()=>{n.collapsible=!n.collapsible;if(!n.collapsible)collapsed().delete(n.id);});
   }else await action(cmd);
  }));
 }
+function internalMaterial(m){return ['page','node','cell'].includes(m?.kind)||!!m?.url?.startsWith('data:page/id,');}
+function sourceTab(m){return internalMaterial(m)?'internal':'external';}
+
 function registry(attachNodeId=null,view={}){
- const state={query:view.query||'',scroll:view.scroll||0};let controller=null;
- modal(attachNodeId?'Прикрепить материал':'Материалы документа',`<div class="registry-tools"><div class="registry-command-row"><input id="registry-search" value="${esc(state.query)}" placeholder="Найти источник по названию или расположению…" aria-label="Поиск источников">${S.readOnly?'':`<button id="material-new-link" class="primary" title="Выбрать файл или добавить ссылку">${uiIcon('addSource')} Добавить источник</button>`}<button id="material-check" title="Проверить наличие исходных файлов и доступность ссылок">${uiIcon('check')} Проверить доступность</button></div><div class="registry-status-row"><span id="registry-summary" role="status"></span><button id="registry-stop" hidden>Остановить проверку</button></div></div><div class="registry-scroll"><table class="registry"><colgroup><col style="width:43%"><col style="width:13%"><col style="width:7%"><col style="width:37%"></colgroup><thead><tr><th>Источник / расположение</th><th>Тип</th><th>Привязки</th><th>Действия</th></tr></thead><tbody id="registry-body"></tbody></table></div>`);
+ const all=S.project.materials;
+ const state={query:view.query||'',scroll:view.scroll||0,
+  tab:view.tab||S.materialTab||(all.length&&all.every(internalMaterial)?'internal':'external')};let controller=null;
+ const tabs=[['external','Внешние источники','external'],['internal','Внутренние ссылки','chain']];
+ modal(attachNodeId?'Прикрепить материал':'Материалы документа',`<div class="registry-tools">
+  <div class="registry-tabs" role="tablist" aria-label="Тип источников">${tabs.map(([id,label,icon])=>`<button type="button" role="tab" aria-controls="registry-results" data-registry-tab="${id}">${uiIcon(icon)} ${label}<span data-source-count></span></button>`).join('')}</div>
+  <div class="registry-command-row"><input id="registry-search" value="${esc(state.query)}" placeholder="Найти источник по названию или расположению…" aria-label="Поиск источников">${S.readOnly?'':`<button id="material-new-link" class="primary">${uiIcon('addSource')} Добавить источник</button>`}<button id="material-check" title="Проверить все источники">${uiIcon('check')} Проверить доступность</button></div>
+  <div class="registry-status-row"><span id="registry-summary" role="status"></span><button id="registry-stop" hidden>Остановить проверку</button></div>
+ </div><div id="registry-results" class="registry-scroll" role="tabpanel"><table class="registry"><colgroup><col style="width:43%"><col style="width:13%"><col style="width:7%"><col style="width:37%"></colgroup><thead><tr><th>Источник / расположение</th><th>Тип</th><th>Привязки</th><th>Действия</th></tr></thead><tbody id="registry-body"></tbody></table></div>`);
  const dialog=$('.modal'),context=currentModal;dialog.classList.add('registry-dialog');context.kind='registry';context.attachNodeId=attachNodeId;context.registryView=state;context.onDispose=()=>controller?.abort();
- $('.registry-scroll').onscroll=e=>state.scroll=e.target.scrollTop;
- const summary=()=>{const values=S.project.materials.map(m=>S.materialChecks.get(m.id)).filter(Boolean),missing=values.filter(v=>['missing','invalid','unreadable'].includes(v.state)).length,uncertain=values.filter(v=>v.state!=='ok'&&!['missing','invalid','unreadable'].includes(v.state)).length;$('#registry-summary').textContent=values.length?`Проверено ${values.length} из ${S.project.materials.length} · недоступно: ${missing} · требует внимания: ${uncertain}`:`Источников: ${S.project.materials.length}${nativeAvailable()?' · Открываются оригиналы файлов':''}`;};
- function rows(){const list=S.project.materials.filter(m=>(m.title+' '+locationText(m)).toLowerCase().includes(state.query.toLowerCase()));
-  $('#registry-body').innerHTML=list.map(m=>{const result=S.materialChecks.get(m.id),bad=result&&['missing','invalid','unreadable'].includes(result.state),uncertain=result&&result.state!=='ok'&&!bad;return `<tr data-registry-id="${esc(m.id)}" class="${bad?'source-missing':uncertain?'source-uncertain':''}"><td><strong class="registry-material-title">${fileIcon(m)} ${esc(m.title)}</strong><small class="material-path">${esc(locationText(m))}</small>${result?`<span class="source-check-state state-${esc(result.state)}" title="${esc(result.detail)}">${uiIcon(result.state==='ok'?'check':bad?'close':'info')} ${esc(auditNames[result.state]||result.state)}</span><small class="source-check-detail">${esc(result.detail)}</small>`:''}</td><td>${esc(typeName[m.kind]||m.kind)}<small class="block-small">ред. ${m.version||1}</small></td><td><button data-usage="${esc(m.id)}" title="Где используется источник">${usage(m.id).length}</button></td><td><div class="row wrap registry-row-actions"><button data-mopen="${esc(m.id)}" title="${m.kind==='document'?'Открыть оригинал':'Просмотреть'}" aria-label="Просмотреть источник">${uiIcon('preview')}</button><button data-material-id="${esc(m.id)}" data-material-action="external" title="Открыть оригинал отдельно" aria-label="Открыть отдельно">${uiIcon('external')}</button><button data-material-id="${esc(m.id)}" data-material-action="location" title="Местоположение исходного файла" aria-label="Местоположение">${uiIcon('folder')}</button>${S.readOnly?'':`<button data-medit="${esc(m.id)}" title="Изменить источник">${uiIcon('edit')} Изменить</button>${!['cell','page','node'].includes(m.kind)?`<button data-mreplace="${esc(m.id)}" title="Выбрать новый файл или адрес, сохранив привязки">${uiIcon('replace')} Заменить</button>`:''}<button class="material-delete" data-mdelete="${esc(m.id)}" title="Удалить источник; файл на диске останется" aria-label="Удалить источник">${uiIcon('trash')}</button>`}${attachNodeId?`<button class="primary" data-mattach="${esc(m.id)}">Прикрепить</button>`:''}</div></td></tr>`;}).join('')||'<tr><td colspan="4">Источники не найдены</td></tr>';
-  $$('[data-mopen]').forEach(b=>b.onclick=caught(async()=>{const back=registryReturn();await openMaterial(b.dataset.mopen);if(currentModal&&currentModal!==context)currentModal.onDismiss=()=>restoreRegistry(back);}));
-  $$('[data-medit]').forEach(b=>b.onclick=()=>editMaterial(b.dataset.medit,attachNodeId));$$('[data-mreplace]').forEach(b=>b.onclick=()=>editMaterial(b.dataset.mreplace,attachNodeId));$$('[data-usage]').forEach(b=>b.onclick=()=>{const back=registryReturn();showUsage(b.dataset.usage);if(currentModal)currentModal.onDismiss=()=>restoreRegistry(back);});
-  $$('[data-mdelete]').forEach(b=>b.onclick=()=>{const back=registryReturn();requestMaterialRemoval(b.dataset.mdelete,attachNodeId);if(currentModal!==context&&currentModal)currentModal.onDismiss=()=>restoreRegistry(back);});
-  $$('[data-mattach]').forEach(b=>b.onclick=()=>{const n=page().nodes.find(n=>n.id===attachNodeId);closeModal();change(()=>{if(n&&!n.materials.includes(b.dataset.mattach))n.materials.push(b.dataset.mattach);});});
+ S.materialTab=state.tab;
+ const scroll=$('.registry-scroll',dialog);scroll.onscroll=()=>state.scroll=scroll.scrollTop;
+ const currentMaterials=()=>S.project.materials.filter(m=>sourceTab(m)===state.tab);
+ const summary=()=>{
+  const items=currentMaterials(),values=items.map(m=>S.materialChecks.get(m.id)).filter(Boolean);
+  const badStates=['missing','invalid','unreadable'],missing=values.filter(v=>badStates.includes(v.state)).length,uncertain=values.filter(v=>v.state!=='ok'&&!badStates.includes(v.state)).length;
+  $('#registry-summary').textContent=values.length?`Проверено ${values.length} из ${items.length} · недоступно: ${missing} · требует внимания: ${uncertain}`:`Источников: ${items.length}`;
+ };
+ function rows(){
+  const list=currentMaterials().filter(m=>(m.title+' '+locationText(m)).toLowerCase().includes(state.query.toLowerCase()));
+  $('#registry-body').innerHTML=list.map(m=>{
+   const id=esc(m.id),internal=internalMaterial(m),result=S.materialChecks.get(m.id);
+   const bad=result&&['missing','invalid','unreadable'].includes(result.state),uncertain=result&&result.state!=='ok'&&!bad;
+   const label=internal?'Перейти по ссылке':'Просмотреть в Studio';
+   const original=m.kind==='link'?'Открыть ссылку':'Открыть оригинал';
+   const actions=`<button data-mopen="${id}" title="${label}" aria-label="${label}">${uiIcon(internal?'chain':'preview')} ${internal?'Перейти':'Просмотр'}</button>`+(internal?'':`<button data-material-id="${id}" data-material-action="external" title="${original}" aria-label="${original}">${uiIcon('external')} ${m.kind==='link'?'Сайт':'Оригинал'}</button><button data-material-id="${id}" data-material-action="location" title="Расположение источника" aria-label="Расположение источника">${uiIcon('folder')}</button>`);
+   const edit=S.readOnly?'':`<button data-medit="${id}" title="Изменить источник">${uiIcon('edit')} Изменить</button>${internal?'':`<button data-mreplace="${id}" title="Выбрать новый файл или адрес">${uiIcon('replace')} Заменить</button>`}<button class="material-delete" data-mdelete="${id}" title="Удалить источник" aria-label="Удалить источник">${uiIcon('trash')}</button>`;
+   const status=result?`<span class="source-check-state state-${esc(result.state)}" title="${esc(result.detail)}">${uiIcon(result.state==='ok'?'check':bad?'close':'info')} ${esc(auditNames[result.state]||result.state)}</span><small class="source-check-detail">${esc(result.detail)}</small>`:'';
+   return `<tr data-registry-id="${id}" class="${bad?'source-missing':uncertain?'source-uncertain':''}"><td><strong class="registry-material-title">${fileIcon(m)} ${esc(m.title)}</strong><small class="material-path">${esc(locationText(m))}</small>${status}</td><td>${esc(typeName[m.kind]||m.kind)}<small class="block-small">ред. ${m.version||1}</small></td><td><button data-usage="${id}" title="Где используется источник">${usage(m.id).length}</button></td><td><div class="row wrap registry-row-actions">${actions}${edit}${attachNodeId?`<button class="primary" data-mattach="${id}">Прикрепить</button>`:''}</div></td></tr>`;
+  }).join('')||'<tr><td colspan="4">Источники не найдены</td></tr>';
+  $$('[data-mopen]',dialog).forEach(b=>b.onclick=caught(()=>openMaterial(b.dataset.mopen)));
+  $$('[data-medit]',dialog).forEach(b=>b.onclick=()=>editMaterial(b.dataset.medit,attachNodeId));$$('[data-mreplace]',dialog).forEach(b=>b.onclick=()=>editMaterial(b.dataset.mreplace,attachNodeId));
+  $$('[data-usage]',dialog).forEach(b=>b.onclick=()=>{const back=registryReturn();showUsage(b.dataset.usage);if(currentModal)currentModal.onDismiss=()=>restoreRegistry(back);});
+  $$('[data-mdelete]',dialog).forEach(b=>b.onclick=()=>{const back=registryReturn();requestMaterialRemoval(b.dataset.mdelete,attachNodeId);if(currentModal!==context&&currentModal)currentModal.onDismiss=()=>restoreRegistry(back);});
+  $$('[data-mattach]',dialog).forEach(b=>b.onclick=()=>{const n=page().nodes.find(n=>n.id===attachNodeId);closeModal();change(()=>{if(n&&!n.materials.includes(b.dataset.mattach))n.materials.push(b.dataset.mattach);});});
+ }
+ const tabButtons=$$('[data-registry-tab]',dialog);
+ function updateTabs(){
+  for(const b of tabButtons){const active=b.dataset.registryTab===state.tab;b.id='registry-tab-'+b.dataset.registryTab;b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;$('[data-source-count]',b).textContent=S.project.materials.filter(m=>sourceTab(m)===b.dataset.registryTab).length;}
+  scroll.setAttribute('aria-labelledby','registry-tab-'+state.tab);
+ }
+ for(const b of tabButtons){
+  b.onclick=()=>{S.materialTab=state.tab=b.dataset.registryTab;state.scroll=scroll.scrollTop=0;updateTabs();rows();summary();};
+  b.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const target=e.key==='Home'?tabButtons[0]:e.key==='End'?tabButtons[1]:tabButtons.find(other=>other!==b);target.click();target.focus();}};
  }
  $('#registry-search').oninput=e=>{state.query=e.target.value;rows();};if($('#material-new-link'))$('#material-new-link').onclick=()=>editMaterial(null,attachNodeId);
  $('#registry-stop').onclick=()=>controller?.abort();$('#material-check').onclick=caught(async()=>{
@@ -1145,27 +1200,29 @@ function registry(attachNodeId=null,view={}){
   try{if(DOC.root&&await DOC.root.queryPermission({mode:'read'})!=='granted')await DOC.root.requestPermission({mode:'read'});
    await checkAllMaterials({signal:controller.signal,onProgress:(result,done,total)=>{if(currentModal!==context){controller.abort();return;}rows();$('#registry-summary').textContent=`Проверено ${done} из ${total}…`;}});
   }finally{if(currentModal===context){$('#material-check').disabled=false;$('#registry-stop').hidden=true;summary();}}
- });rows();summary();$('.registry-scroll').scrollTop=state.scroll;
+ });updateTabs();rows();summary();scroll.scrollTop=state.scroll;
 }
-function editMaterial(id,attachNodeId){
+function editMaterial(id,attachNodeId,{reconnect=false,onReturn=null}={}){
  if(S.readOnly)return;
  const parent=registryReturn();
+ const back=()=>onReturn?caught(onReturn)():restoreRegistry(parent);
+ const saved=tab=>onReturn?caught(onReturn)():registry(attachNodeId,{...(parent||{}),tab});
  if(id&&findMaterial(id)?.kind==='cell'){const m=findMaterial(id);inputDialog('Название ссылки на ячейку','Название',m.title,value=>{change(()=>{m.title=value;m.version=(m.version||1)+1;});registry(attachNodeId,parent||{});});currentModal.onDismiss=()=>restoreRegistry(parent);return;}
  const m=id?mat(id):{title:'',kind:'link'};if(!m)return;
- let source=['page','node'].includes(m.kind)?'internal':m.path||m.nativePath||m.asset?'local':m.url?'url':'local',pending=null;
- modal(id?'Изменить источник':'Новый источник',`<div class="stack material-editor"><div class="material-source-choice" role="group" aria-label="Как добавить источник"><button data-source-choice="local">${uiIcon('folder')}<span>Выбрать файл<small>Название, тип и путь — автоматически</small></span></button><button data-source-choice="url">${uiIcon('external')}<span>Добавить ссылку<small>Адрес и ваше название</small></span></button></div><div id="mat-file" class="stack"><div class="row wrap"><button id="mat-file-pick" class="primary">${uiIcon('folder')} Выбрать файл</button>${DOC.root||DOC.files.size?'<button id="mat-file-folder">Из подключённой папки</button>':''}<input id="mat-file-input" type="file" hidden></div><div id="mat-folder" hidden><input id="mat-folder-search" placeholder="Найти файл в папке…"><div id="mat-folder-list" class="folder-files"></div></div><div id="mat-file-info" class="material-file-info" hidden><div id="mat-file-name" class="material-file-name"></div><dl><dt>Тип</dt><dd id="mat-file-kind"></dd><dt>Путь</dt><dd id="mat-file-path"></dd></dl></div><small id="mat-file-help" class="muted">Сначала выберите файл. Его свойства заполнятся автоматически.</small></div><div id="mat-link" class="stack" hidden><div class="row material-link-choice" role="group" aria-label="Куда ведёт ссылка"><button data-link-choice="url">Внешний адрес</button><button data-link-choice="internal">Внутри документа</button></div><div id="mat-external">${field('Адрес ссылки','mat-url',m.url&&!m.url.startsWith('data:')?m.url:'','url')}</div><div id="mat-internal" hidden>${internalSelectorHTML('mat',m)}</div></div><div id="mat-title-wrap" hidden>${field('Название','mat-title',m.title&&!m.title.startsWith('data:')?m.title:'')}</div></div>`,`<button id="mat-cancel">Отмена</button><span class="spacer"></span><button id="mat-save" class="primary">${id?'Сохранить':'Добавить источник'}</button>`,true);
- const dialog=$('.modal'),ctx=operationContext();dialog.classList.add('material-editor-dialog');bindInternalSelector('mat',m);currentModal.onDismiss=()=>restoreRegistry(parent);
+ let source=internalMaterial(m)?'internal':reconnect||m.path||m.nativePath||m.asset?'local':m.url?'url':'local',pending=null;
+ modal(id?'Изменить источник':'Новый источник',`<div class="stack material-editor"><div class="material-source-choice" role="group" aria-label="Как добавить источник"><button data-source-choice="local">${uiIcon('folder')} Файл</button><button data-source-choice="url">${uiIcon('external')} Ссылка</button></div><div id="mat-file" class="stack"><button id="mat-file-pick" class="material-file-pick" type="button"><span class="material-pick-icon">${uiIcon('folder')}</span><span><strong>Выбрать файл</strong><small id="mat-file-state" role="status"></small></span>${uiIcon('chevronRight')}</button><div class="row wrap">${DOC.root||DOC.files.size?'<button id="mat-file-folder">Из подключённой папки</button>':''}<input id="mat-file-input" type="file" hidden></div><div id="mat-folder" hidden><input id="mat-folder-search" placeholder="Найти файл в папке…"><div id="mat-folder-list" class="folder-files"></div></div><div id="mat-file-info" class="material-file-info" hidden><div id="mat-file-name" class="material-file-name"></div><dl><dt>Тип</dt><dd id="mat-file-kind"></dd><dt>Путь</dt><dd id="mat-file-path"></dd></dl></div><small id="mat-file-help" class="muted">Сначала выберите файл. Его свойства заполнятся автоматически.</small></div><div id="mat-link" class="stack" hidden><div class="row material-link-choice" role="group" aria-label="Куда ведёт ссылка"><button data-link-choice="url">Внешний адрес</button><button data-link-choice="internal">Внутри документа</button></div><div id="mat-external">${field('Адрес ссылки','mat-url',m.url&&!m.url.startsWith('data:')?m.url:'','url')}</div><div id="mat-internal" hidden>${internalSelectorHTML('mat',m)}</div></div><div id="mat-title-wrap" hidden>${field('Название','mat-title',m.title&&!m.title.startsWith('data:')?m.title:'')}</div></div>`,`<button id="mat-cancel">Отмена</button><span class="spacer"></span><button id="mat-save" class="primary">${id?'Сохранить':'Добавить источник'}</button>`,true);
+ const dialog=$('.modal'),ctx=operationContext();dialog.classList.add('material-editor-dialog');bindInternalSelector('mat',m);currentModal.onDismiss=back;
  const current=()=>dialog.isConnected&&contextCurrent(ctx);
  const describeFile=(item)=>{const labels={doc:'Word',slides:'Презентация',sheet:'Excel',archive:'Архив',file:'Файл'};$('#mat-file-name').innerHTML=fileIcon(item)+`<strong>${esc(item.filename||sourceFileName(item))}</strong>`;$('#mat-file-kind').textContent=labels[fileType(item)]||typeName[item.kind]||'Файл';$('#mat-file-path').textContent=item.nativePath||item.path||'Файл в хранилище';};
  const show=()=>{
-  const local=source==='local',ready=!!(pending||id&&(m.path||m.nativePath||m.asset));$('#mat-file').hidden=!local;$('#mat-link').hidden=local;$('#mat-internal').hidden=source!=='internal';$('#mat-external').hidden=source!=='url';$('#mat-title-wrap').hidden=local&&!ready;$('#mat-file-info').hidden=!ready;$('#mat-save').disabled=local&&!ready;
+  const local=source==='local',ready=!!(pending||!reconnect&&id&&(m.path||m.nativePath||m.asset));$('#mat-file-state').textContent=pending?'Файл выбран':reconnect?'Исходный файл недоступен':ready?'Файл привязан':'Файл не выбран';$('#mat-file').hidden=!local;$('#mat-link').hidden=local;$('#mat-internal').hidden=source!=='internal';$('#mat-external').hidden=source!=='url';$('#mat-title-wrap').hidden=local&&!ready;$('#mat-file-info').hidden=!ready;$('#mat-save').disabled=local&&!ready;
   $$('[data-source-choice]',dialog).forEach(b=>b.setAttribute('aria-pressed',String(local?b.dataset.sourceChoice==='local':b.dataset.sourceChoice==='url')));$$('[data-link-choice]',dialog).forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.linkChoice===source)));
  };if(id&&(m.path||m.nativePath||m.asset))describeFile(m);
- const selectFile=(file,path=null,handle=null)=>{if(!current())return;pending={file,path:materialFilePath(file,path),handle};$('#mat-title').value=file.name;describeFile({filename:file.name,path:pending.path,kind:inferKind(file)});$('#mat-folder').hidden=true;$('#mat-file-help').textContent=S.server?'Файл будет загружен при добавлении источника.':path||DOC.files.has(pending.path)?'Путь сохранится автоматически. Файл остаётся в подключённой папке.':'Файл доступен сейчас. Для повторного открытия документа подключите папку с этим файлом.';show();};
+ const selectFile=(file,path=null,handle=null)=>{if(!current())return;pending={file,path:materialFilePath(file,path),handle};if(!reconnect||!m.title)$('#mat-title').value=file.name;describeFile({filename:file.name,path:pending.path,kind:inferKind(file)});$('#mat-folder').hidden=true;$('#mat-file-help').textContent=S.server?'Файл будет загружен при добавлении источника.':path||DOC.files.has(pending.path)?'Путь сохранится автоматически. Файл остаётся в подключённой папке.':'Файл доступен сейчас. Для повторного открытия документа подключите папку с этим файлом.';show();};
  $$('[data-source-choice]',dialog).forEach(b=>b.onclick=()=>{source=b.dataset.sourceChoice;show();if(source==='url')$('#mat-url').focus();});$$('[data-link-choice]',dialog).forEach(b=>b.onclick=()=>{source=b.dataset.linkChoice;show();});
  $('#mat-file-input').onchange=e=>{const file=e.target.files[0];if(file)selectFile(file);};
  $('#mat-file-pick').onclick=caught(async()=>{
-  if(nativeAvailable()){const info=await nativeCall('pick',{documentPath:DOC.nativePath||''});if(info.cancelled||!current())return;pending={native:info};$('#mat-title').value=info.filename;describeFile({...info,kind:inferMaterialKind(info.filename)});$('#mat-file-path').textContent=info.nativePath;$('#mat-file-help').textContent='Будет сохранён путь к оригиналу. Файл остаётся на своём месте.';show();return;}
+  if(nativeAvailable()){const info=await nativeCall('pick',{documentPath:DOC.nativePath||''});if(info.cancelled||!current())return;pending={native:info};if(!reconnect||!m.title)$('#mat-title').value=info.filename;describeFile({...info,kind:inferMaterialKind(info.filename)});$('#mat-file-path').textContent=info.nativePath;$('#mat-file-help').textContent='Будет сохранён путь к оригиналу. Файл остаётся на своём месте.';show();return;}
   if(window.showOpenFilePicker&&window.isSecureContext){try{const [handle]=await showOpenFilePicker({multiple:false,startIn:DOC.root||DOC.handle||'documents'});const file=await handle.getFile(),parts=DOC.root?.resolve?await DOC.root.resolve(handle):null;selectFile(file,parts?.join('/'),handle);return;}catch(e){if(e.name==='AbortError')return;if(!['SecurityError','NotAllowedError'].includes(e.name))throw e;}}
   if(current())$('#mat-file-input').click();
  });
@@ -1174,18 +1231,18 @@ function editMaterial(id,attachNodeId){
   const list=DOC.root?await folderEntries(DOC.root):[...DOC.files].map(([path,file])=>({path,file}));if(!current())return;
   const draw=(q='')=>{const filtered=list.map((item,index)=>({...item,index})).filter(item=>item.path.toLowerCase().includes(q.toLowerCase()));$('#mat-folder-list').innerHTML=filtered.slice(0,800).map(item=>`<button class="folder-file" data-mat-file="${item.index}">${fileIcon({path:item.path})}<span>${esc(item.path)}</span></button>`).join('')||'<p class="muted">Файлы не найдены.</p>';if(filtered.length>800)$('#mat-folder-list').insertAdjacentHTML('beforeend','<p class="muted">Показаны первые 800. Уточните поиск.</p>');$$('[data-mat-file]',dialog).forEach(b=>b.onclick=caught(async()=>{const item=list[Number(b.dataset.matFile)];selectFile(item.file||await item.handle.getFile(),item.path);}));};$('#mat-folder').hidden=false;$('#mat-folder-search').oninput=e=>draw(e.target.value);draw();$('#mat-folder-search').focus();
  });
- $('#mat-cancel').onclick=dismissModal;show();
+ $('#mat-cancel').onclick=dismissModal;show();if(reconnect)$('#mat-file-pick').click();
  $('#mat-save').onclick=caught(async()=>{
   const title=$('#mat-title').value.trim();
   if(source==='local'&&pending){const save=$('#mat-save');save.disabled=true;try{
-   if(pending.native){if(!current())return;const info=pending.native,mid=id||C.uid('material'),item={id:mid,title:title||info.filename,kind:inferMaterialKind(info.filename),path:relativeMaterialPath(info.nativePath,DOC.nativePath||''),filename:info.filename,size:info.size,mime:info.mime,nativePath:info.nativePath,nativeOpenURL:info.openURL||location.origin+'/open-original?path='+encodeURIComponent(info.nativePath)+'&key='+encodeURIComponent(info.openKey),version:(m.version||0)+1};change(()=>{const index=S.project.materials.findIndex(m=>m.id===mid);if(index<0)S.project.materials.push(item);else S.project.materials[index]=item;if(attachNodeId){const node=ctx.project.pages.find(p=>p.id===ctx.page)?.nodes.find(n=>n.id===attachNodeId);if(node)node.materials=[...new Set([...node.materials,mid])];}});S.materialChecks.delete(mid);DOC.sessionFiles.delete(mid);DOC.sourceHandles?.delete(mid);for(const key of [mid,mid+':preview']){if(DOC.urls.has(key))URL.revokeObjectURL(DOC.urls.get(key));DOC.urls.delete(key);}}
+   if(pending.native){if(!current())return;const info=pending.native,mid=id||C.uid('material'),item={id:mid,title:title||info.filename,kind:inferMaterialKind(info.filename),path:relativeMaterialPath(info.nativePath,DOC.nativePath||''),filename:info.filename,size:info.size,mime:info.mime,nativePath:info.nativePath,nativeOpenURL:info.openURL||location.origin+'/open-original?path='+encodeURIComponent(info.nativePath)+'&key='+encodeURIComponent(info.openKey),version:(m.version||0)+1};change(()=>{const index=S.project.materials.findIndex(m=>m.id===mid);if(index<0)S.project.materials.push(item);else S.project.materials[index]=item;if(attachNodeId){const node=ctx.project.pages.find(p=>p.id===ctx.page)?.nodes.find(n=>n.id===attachNodeId);if(node)node.materials=[...new Set([...node.materials,mid])];}});S.materialChecks.delete(mid);DOC.sessionFiles.delete(mid);DOC.sessionFiles.delete(mid+':preview');DOC.sourceHandles?.delete(mid);for(const key of [mid,mid+':preview']){if(DOC.urls.has(key))URL.revokeObjectURL(DOC.urls.get(key));DOC.urls.delete(key);}}
    else await uploadFile(pending.file,id,pending.path,{title:title||pending.file.name,attachNodeId,handle:pending.handle});
-  }catch(e){if(current())save.disabled=false;throw e;}if(current()){closeModal();registry(attachNodeId,parent||{});renderScene();}return;}
+  }catch(e){if(current())save.disabled=false;throw e;}if(current()){closeModal();renderScene();await saved('external');}return;}
   let data,preserve=false;
   if(source==='local'){if(!id||!(m.path||m.nativePath||m.asset))return;data={...m,title:title||sourceFileName(m)};preserve=true;}
   else if(source==='internal'){data=internalSelection('mat');if(title)data.title=title;}
   else{const url=httpURL($('#mat-url').value.trim());if(!url)return toast('Нужен HTTP / HTTPS-адрес');if(!title)return toast('Введите название');preserve=!!id&&url===httpURL(m.url);data=preserve?{...m,title}:{title,url,kind:inferMaterialKind(url)};}
-  const mid=id||C.uid('m');closeModal();change(()=>{const target=id?m:{id:mid};S.materialChecks.delete(mid);if(!preserve){DOC.sourceHandles?.delete(mid);for(const key of ['path','url','target','asset','filename','mime','size','nativePath','nativeOpenURL','previewNativePath','previewAsset','previewPath','previewURL','previewMaterial','startAt','embed'])delete target[key];DOC.sessionFiles.delete(mid);DOC.sessionFiles.delete(mid+':preview');for(const key of [mid,mid+':preview']){if(DOC.urls.has(key))URL.revokeObjectURL(DOC.urls.get(key));DOC.urls.delete(key);}}Object.assign(target,data,{id:mid,version:(m.version||0)+1});if(!id)S.project.materials.push(target);if(attachNodeId){const n=page().nodes.find(n=>n.id===attachNodeId);if(n)n.materials=[...new Set([...n.materials,mid])];}});registry(attachNodeId,parent||{});
+  const mid=id||C.uid('m');closeModal();change(()=>{const target=id?m:{id:mid};S.materialChecks.delete(mid);if(!preserve){DOC.sourceHandles?.delete(mid);for(const key of ['path','url','target','asset','filename','mime','size','nativePath','nativeOpenURL','previewNativePath','previewAsset','previewPath','previewURL','previewMaterial','startAt','embed'])delete target[key];DOC.sessionFiles.delete(mid);DOC.sessionFiles.delete(mid+':preview');for(const key of [mid,mid+':preview']){if(DOC.urls.has(key))URL.revokeObjectURL(DOC.urls.get(key));DOC.urls.delete(key);}}Object.assign(target,data,{id:mid,version:(m.version||0)+1});if(!id)S.project.materials.push(target);if(attachNodeId){const n=page().nodes.find(n=>n.id===attachNodeId);if(n)n.materials=[...new Set([...n.materials,mid])];}});await saved(sourceTab(data));
  });
 }
 
@@ -1194,31 +1251,168 @@ function v5ShowNodeMaterials(n,kind){
  modal('Материалы — '+n.title,`<div class="stack material-list">${ms.map(m=>`<button data-view-material="${esc(m.id)}"><span class="material-type-icon">${sign(m.kind)}</span><span><strong>${esc(m.title)}</strong><small>${esc(typeName[m.kind]||m.kind)}${m.kind==='page'?' · откроется подтверждение перехода':''}</small></span><span class="spacer"></span><span>›</span></button>`).join('')||'<p>Материалов этого типа нет.</p>'}</div>`,'',true);
  $$('[data-view-material]').forEach(b=>b.onclick=caught(()=>openMaterial(b.dataset.viewMaterial)));
 }
-async function v5OpenMaterial(id){
- const ctx=operationContext();const m=mat(id);if(!m)return toast('Материал не найден');
- if(m.kind==='page'||m.url?.startsWith('data:page/id,')){
-  const pid=(m.url||'').split(',')[1],index=S.project.pages.findIndex(p=>p.id===pid),same=index===S.pageIndex;
-  modal('Переход на страницу',`<p class="material-long-title">${esc(m.title)}</p><div class="notice">Это внутренняя ссылка, а не файл. ${index<0?'Связанная страница отсутствует.':same?'Вы уже на этой странице. Камера не перемещалась.':'Страница: '+esc(S.project.pages[index].title)}</div>`,index>=0&&!same?'<button id="go-material-page" class="primary">Перейти на страницу</button>':'',true);
-  if($('#go-material-page'))$('#go-material-page').onclick=()=>{closeModal();switchPage(index);S.selected.clear();render();fit();};return;
+const docxArchiveLimit=24*1024*1024,wordXmlLimit=4*1024*1024;
+
+async function readLimited(stream,limit){
+ const reader=stream.getReader(),chunks=[];let size=0;
+ try{
+  for(;;){
+   const {value,done}=await reader.read();if(done)break;
+   size+=value.length;if(size>limit)throw Error('Файл слишком большой для предпросмотра');
+   chunks.push(value);
+  }
+ }finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+ const result=new Uint8Array(size);let offset=0;
+ for(const chunk of chunks){result.set(chunk,offset);offset+=chunk.length;}
+ return result;
+}
+
+// Read only the main text part. No package relationships, media, or macros are loaded.
+async function readWordXml(bytes){
+ const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength),u16=i=>view.getUint16(i,true),u32=i=>view.getUint32(i,true);
+ const decoder=new TextDecoder(),entry='word/document.xml',fail=()=>Error('Не удалось прочитать основной текст DOCX');
+ let end=bytes.length-22;
+ for(;end>=Math.max(0,bytes.length-65557);end--)if(u32(end)===0x06054b50&&end+22+u16(end+20)===bytes.length)break;
+ if(end<Math.max(0,bytes.length-65557)||u16(end+4)||u16(end+6))throw fail();
+ let cursor=u32(end+16);const directoryEnd=cursor+u32(end+12),count=u16(end+10);
+ if(directoryEnd>end||count===65535)throw fail();
+ for(let i=0;i<count;i++){
+  if(cursor+46>directoryEnd||u32(cursor)!==0x02014b50)throw fail();
+  const nameStart=cursor+46,nameEnd=nameStart+u16(cursor+28),next=nameEnd+u16(cursor+30)+u16(cursor+32);
+  if(next>directoryEnd)throw fail();
+  if(nameEnd-nameStart===entry.length&&decoder.decode(bytes.subarray(nameStart,nameEnd))===entry){
+   const flags=u16(cursor+8),method=u16(cursor+10),compressed=u32(cursor+20),size=u32(cursor+24),offset=u32(cursor+42);
+   if(flags&1||!size||size>wordXmlLimit||offset+30>cursor||u32(offset)!==0x04034b50||u16(offset+8)!==method)throw fail();
+   const dataStart=offset+30+u16(offset+26)+u16(offset+28);
+   if(dataStart+compressed>cursor)throw fail();
+   const data=bytes.subarray(dataStart,dataStart+compressed);
+   const xml=method===0?data:method===8
+    ?await readLimited(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw')),wordXmlLimit):null;
+   if(!xml||xml.length!==size)throw fail();
+   return decoder.decode(xml);
+  }
+  cursor=next;
  }
- let url='',preview='',error='',previewError='';try{url=await resolveMaterial(m,false,{pdf:m.kind==='pdf'});}catch(e){if(e.name==='AbortError')return;error=e.message;}
- try{if(m.previewMaterial)preview=await resolveMaterial(mat(m.previewMaterial),false,{pdf:true});else if(m.previewPath||m.previewNativePath||m.previewURL||m.previewAsset)preview=await resolveMaterial(m,true,{pdf:true});}catch(e){if(e.name==='AbortError')return;previewError=e.message;}
- if(!contextCurrent(ctx))return;
- const info=`<p class="material-long-title">${fileIcon(m)} <strong>${esc(m.filename||m.title)}</strong></p><p class="material-path muted">${esc(locationText(m))} · ${esc(typeName[m.kind]||m.kind)}</p>`;
- let content=info;
- if(!url&&!preview)content+=`<div class="notice warn">${esc(error||previewError||'Браузер ещё не имеет доступа к папке материалов. Укажите корневую папку, в которой лежит HTML документа.')}<div class="row wrap"><button id="viewer-bind-folder">Подключить папку</button>${S.readOnly?'':'<button id="viewer-edit-path">Исправить путь</button>'}</div></div>`;
- else if(m.kind==='video')content+=`<video controls preload="metadata" playsinline src="${esc(url)}"></video><p id="media-error" class="muted"></p>`;
- else if(m.kind==='audio')content+=`<audio controls src="${esc(url)}"></audio>`;
- else if(m.kind==='image')content+=`<img class="viewer-img" alt="${esc(m.title)}" src="${esc(url)}">`;
- else if(m.kind==='pdf'||preview)content+=`<iframe title="${esc(m.title)}" referrerpolicy="no-referrer" src="${esc(preview||url)}"></iframe><p class="muted">PDF отображается средствами браузера. Пустое окно: проверьте доступ к папке или откройте отдельно.</p>`;
- else if(m.kind==='link'&&m.embed)content+=`<iframe title="${esc(m.title)}" sandbox="allow-scripts allow-forms allow-popups" referrerpolicy="no-referrer" src="${esc(url)}"></iframe><p class="muted">Сайт может запрещать встраивание. Тогда используйте «Открыть отдельно».</p>`;
- else if(m.kind==='document')content+='<div class="notice"><h3>Исходный документ</h3><p>Word и презентация остаются в своей папке. Для просмотра здесь укажите в реестре путь к PDF-превью. Без превью исходник можно открыть отдельно.</p></div>';
- else content+='<div class="notice">Внешняя ссылка. Откройте её отдельной кнопкой ниже. Камера схемы остаётся на месте.</div>';
- if(error&&preview)content+=`<div class="notice warn">Оригинал недоступен: ${esc(error)}. Показано PDF-превью.</div>`;if(previewError)content+=`<div class="notice warn">Превью недоступно: ${esc(previewError)}</div>`;
- const footer=`${url?`<a class="button-link" href="${esc(url)}" data-material-action="external" data-material-id="${esc(m.id)}">Открыть отдельно</a>`:''}<span class="spacer"></span><button id="back-registry">К материалам</button>`;
- modal(m.title,content,footer);
- $('#back-registry').onclick=()=>registry();if($('#viewer-bind-folder'))$('#viewer-bind-folder').onclick=caught(async()=>{await bindFolder();await openMaterial(id);});if($('#viewer-edit-path'))$('#viewer-edit-path').onclick=()=>editMaterial(id);
- const video=$('video',$('.modal'));if(video){video.onloadedmetadata=()=>{if(m.startAt)video.currentTime=Math.min(m.startAt,Number.isFinite(video.duration)?Math.max(0,video.duration-.1):m.startAt);};video.onerror=()=>{$('#media-error').textContent='Браузер не смог воспроизвести файл. Проверьте путь, доступ и кодек; подключите папку через кнопку «Папка».';};}
+ throw fail();
+}
+
+async function docxPreview(m,url){
+ let bytes;
+ if(desktopAvailable()&&(m.path||m.nativePath)){
+  bytes=await nativeCall('read-docx',nativeSource(m));
+ }else{
+  const response=await fetch(url,{referrerPolicy:'no-referrer'});
+  if(!response.ok||!response.body)throw Error('Не удалось прочитать DOCX');
+  bytes=await readLimited(response.body,docxArchiveLimit);
+ }
+ const xml=await readWordXml(bytes);
+ if(/<!DOCTYPE/i.test(xml))throw Error('Недопустимая структура DOCX');
+ const doc=new DOMParser().parseFromString(xml,'application/xml');
+ const ns=doc.documentElement.namespaceURI;
+ if(!['http://schemas.openxmlformats.org/wordprocessingml/2006/main','http://purl.oclc.org/ooxml/wordprocessingml/main'].includes(ns))throw Error('Не удалось прочитать DOCX');
+ const children=(el,name)=>[...(el?.children||[])].filter(e=>e.namespaceURI===ns&&(!name||e.localName===name));
+ const child=(el,name)=>children(el,name)[0],val=el=>el?.getAttributeNS(ns,'val');
+ const body=child(doc.documentElement,'body');if(!body)throw Error('В DOCX нет основного текста');
+ const paragraph=p=>{
+  const props=child(p,'pPr'),style=val(child(props,'pStyle'))||'',align=val(child(props,'jc'));
+  const level=style.match(/^Heading([1-3])$/i)?.[1],tag=level?'h'+level:/^Title$/i.test(style)?'h1':'p';
+  const text=[...p.getElementsByTagNameNS(ns,'r')].map(run=>{
+   const format=child(run,'rPr'),enabled=name=>{const el=child(format,name);return el&&!['0','false','off'].includes(val(el));};
+   let part=children(run).map(el=>el.localName==='t'?esc(el.textContent):['br','cr'].includes(el.localName)?'<br>':el.localName==='tab'?'&emsp;':'').join('');
+   if(enabled('b'))part='<strong>'+part+'</strong>';
+   if(enabled('i'))part='<em>'+part+'</em>';
+   return part;
+  }).join('');
+  return `<${tag}${['center','right','both'].includes(align)?' class="word-align-'+align+'"':''}>${text||'&nbsp;'}</${tag}>`;
+ };
+ const blocks=(el,depth=0)=>children(el).map(item=>{
+  if(item.localName==='p')return paragraph(item);
+  if(depth>=4)return '';
+  if(item.localName==='sdt')return blocks(child(item,'sdtContent'),depth+1);
+  if(item.localName!=='tbl')return '';
+  const rows=children(item,'tr').map(row=>'<tr>'+children(row,'tc').map(cell=>{
+   const span=Math.max(1,Math.min(30,Number(val(child(child(cell,'tcPr'),'gridSpan')))||1));
+   return `<td colspan="${span}">${blocks(cell,depth+1)}</td>`;
+  }).join('')+'</tr>').join('');
+  return '<table><tbody>'+rows+'</tbody></table>';
+ }).join('');
+ return blocks(body);
+}
+
+let materialViewerRequest=0;
+async function v5OpenMaterial(id,{back=registryReturn()}={}){
+ const ctx=operationContext(),from=currentModal,requestId=++materialViewerRequest,m=findMaterial(id);
+ if(!m)return toast('Материал не найден');
+ const current=()=>contextCurrent(ctx)&&currentModal===from&&requestId===materialViewerRequest&&findMaterial(id)===m;
+ let url='',preview='',error='',previewError='',wordBody='',wordError='';
+ try{url=await resolveMaterial(m,false,{pdf:m.kind==='pdf'});}catch(e){if(e.name==='AbortError')return;error=e.message;}
+ try{
+  const copy=m.previewMaterial&&findMaterial(m.previewMaterial);
+  if(m.previewMaterial){if(!copy)throw Error('PDF-копия отсутствует в материалах');preview=await resolveMaterial(copy,false,{pdf:true});}
+  else if(m.previewPath||m.previewNativePath||m.previewURL||m.previewAsset)preview=await resolveMaterial(m,true,{pdf:true});
+ }catch(e){if(e.name==='AbortError')return;previewError=e.message;}
+ if(!current())return;
+ const isDocx=/\.docx(?:[?#]|$)/i.test(m.filename||m.nativePath||m.path||m.url||'')||m.mime==='application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+ if(isDocx&&url&&!preview){try{wordBody=await docxPreview(m,url);}catch(e){wordError=e.message;}}
+ if(!current())return;
+
+ const location=locationText(m),local=!m.url||m.path||m.nativePath;
+ const repair=local&&!url&&!S.readOnly;
+ const canBind=local&&(!url||wordError)&&!nativeAvailable();
+ const office=m.kind==='document'&&['doc','slides','sheet'].includes(fileType(m));
+ const attachPDF=office&&nativeAvailable()&&!S.readOnly&&!preview;
+ let content='',format='',state='';
+ if(url&&m.kind==='video')content=`<video controls preload="metadata" playsinline src="${esc(url)}"></video><p id="media-error" class="muted"></p>`;
+ else if(url&&m.kind==='audio')content=`<audio controls src="${esc(url)}"></audio>`;
+ else if(url&&m.kind==='image')content=`<img class="viewer-img" alt="${esc(m.title)}" src="${esc(url)}">`;
+ else if(preview||url&&m.kind==='pdf'){format='Предпросмотр PDF';content=`<iframe title="${esc(m.title)}" referrerpolicy="no-referrer" src="${esc(preview||url)}"></iframe>`;}
+ else if(wordBody){format='DOCX · текст и таблицы';content=`<article class="word-preview">${wordBody}</article>`;}
+ else if(url&&m.kind==='link'&&m.embed){content=`<iframe title="${esc(m.title)}" sandbox="allow-scripts allow-forms allow-popups" referrerpolicy="no-referrer" src="${esc(url)}"></iframe>`;}
+ else{
+  const missing=local&&!url,heading=missing?'Подключите оригинал':m.kind==='link'?'Внешняя ссылка':'Предпросмотр недоступен';
+  const message=missing?(repair?'Выберите исходный файл, чтобы восстановить связь с документом.':'Подключите папку с исходным файлом.')
+   :m.kind==='link'?'Адрес можно открыть в браузере.':attachPDF?'Подключите PDF-копию для просмотра в Studio.':'Оригинал можно открыть соответствующим приложением.';
+  content=`<div class="viewer-empty">${fileIcon(m)}<h3>${heading}</h3><p>${message}</p></div>`;
+ }
+ if(local&&!url)state='Оригинал недоступен'+(error?' · '+error:'');
+ else if(wordError&&!wordBody)state='DOCX не удалось прочитать · '+wordError;
+ else if(previewError&&!preview)state='PDF-копия недоступна · '+previewError;
+ const title=m.title||m.filename||'Материал';
+ const openLabel=m.kind==='link'?'Открыть ссылку':'Открыть оригинал';
+ const actions=`${repair?'<button id="viewer-edit-path" class="primary">'+uiIcon('folder')+' Выбрать оригинал</button>':''}${canBind?'<button id="viewer-bind-folder">'+uiIcon('folder')+' Подключить папку</button>':''}${url?`<button data-material-action="external" data-material-id="${esc(id)}">${uiIcon('external')} ${openLabel}</button>`:''}${attachPDF?`<button id="viewer-attach-pdf">${uiIcon('addSource')} Подключить PDF</button>`:''}<button id="back-registry" title="К материалам" aria-label="К материалам">${uiIcon('registry')}</button>`;
+ modal(title,content);
+ const dialog=$('.modal');dialog.classList.add('material-viewer-dialog');
+ const head=$('.modal-head',dialog),name=$('h2',head);$('.spacer',head).remove();
+ name.outerHTML=`<div class="viewer-identity">${fileIcon(m)}<div class="viewer-details"><h2>${esc(title)}</h2><div class="viewer-location" title="${esc(location)}">${esc(location)}</div><div class="viewer-tags"><span>${esc(typeName[m.kind]||m.kind)}</span><span>Ред. ${m.version||1}</span>${format?`<span>${format}</span>`:''}</div></div></div>`;
+ $('[data-close]',head).insertAdjacentHTML('beforebegin',`<div class="viewer-actions">${actions}</div>`);
+ if(state)head.insertAdjacentHTML('beforeend',`<div class="viewer-state" role="status">${uiIcon('info')} ${esc(state)}</div>`);
+ const viewer=currentModal;viewer.onDismiss=()=>restoreRegistry(back);
+ const reopen=()=>v5OpenMaterial(id,{back});
+ $('#back-registry').onclick=()=>{closeModal();if(back)restoreRegistry(back);else registry();};
+ if(canBind)$('#viewer-bind-folder').onclick=caught(async()=>{await bindFolder();if(contextCurrent(ctx)&&currentModal===viewer)await reopen();});
+ if(repair)$('#viewer-edit-path').onclick=()=>editMaterial(id,null,{reconnect:true,onReturn:reopen});
+ if(attachPDF)$('#viewer-attach-pdf').onclick=caught(async()=>{
+  const button=$('#viewer-attach-pdf');button.disabled=true;
+  try{
+   const info=await nativeCall('pick',{documentPath:DOC.nativePath||'',pdfOnly:true});
+   if(info.cancelled||!contextCurrent(ctx)||currentModal!==viewer||findMaterial(id)!==m)return;
+   const verified=await nativeCall('stat',{nativePath:info.nativePath,documentPath:DOC.nativePath||'',pdf:true});
+   if(verified.state!=='ok'||!verified.pdf)throw Error('Выберите доступный файл PDF');
+   if(!contextCurrent(ctx)||currentModal!==viewer||findMaterial(id)!==m)return;
+   change(()=>{
+    delete m.previewAsset;delete m.previewURL;delete m.previewMaterial;
+    m.previewNativePath=info.nativePath;m.previewPath=relativeMaterialPath(info.nativePath,DOC.nativePath||'');
+    m.version=(m.version||1)+1;
+   });
+   S.materialChecks.delete(id+':preview');
+   await reopen();
+  }finally{if(button.isConnected)button.disabled=false;}
+ });
+ const video=$('video',dialog);
+ if(video){
+  video.onloadedmetadata=()=>{if(m.startAt)video.currentTime=Math.min(m.startAt,Number.isFinite(video.duration)?Math.max(0,video.duration-.1):m.startAt);};
+  video.onerror=()=>{$('#media-error',dialog).textContent='Studio не смогла воспроизвести видео. Проверьте исходный файл и кодек.';};
+ }
 }
 function bulkRelink(){
  modal('Перепривязка путей и адресов',`<div class="stack">${field('Старое начало пути / адреса','relink-old','')}${field('Новое начало пути / адреса','relink-new','')}<p class="muted">Меняются только исходные адреса материалов, не ID и не сами файлы. Поддерживаются относительные пути и HTTP / HTTPS.</p><button id="relink-preview">Показать изменения</button><div id="relink-preview-list"></div></div>`,`<button id="relink-apply" class="primary" disabled>Применить</button>`,true);
@@ -1434,16 +1628,21 @@ function command(a,icon,title,text='',cls=''){return `<button type="button" data
 Object.assign(S,{editModes:{edges:true,centers:true,ports:false,connections:true,grid:false,gridSize:20,ortho:false,moveChain:false,shared:false},popover:null,guides:[],addingBus:null,materialChecks:new Map()});
 function renderShell(){
  $('#app').innerHTML=`<header class="topbar"><button class="brand brand-home" data-action="home" title="Документы Studio" aria-label="Документы Studio"><span class="logo">${uiIcon('chain')}</span><span><strong>Pipeline Studio <span class="version-tag">${RELEASE}</span></strong></span></button><div class="project-head"><strong id="project-title"></strong><div class="project-meta"><button id="page-trigger" class="page-trigger" data-action="pages" title="Страницы документа"></button><span id="save-status" class="save-status"></span></div></div><div id="top-actions" class="row"></div></header><main class="workspace"><section class="center"><div class="canvas-wrap"><div id="stage"><div id="world"><div id="frames"></div><svg id="edges"></svg><svg id="ink"></svg><div id="nodes"></div><svg id="guides"></svg></div></div><div id="tools" class="toolrail"></div><div id="dock" class="zoom-tools" role="toolbar" aria-label="Вид и режимы редактирования"></div><div id="mode-popover" hidden></div><div id="connect-status" class="connect-status" hidden></div></div></section><aside class="right-panel"><header class="inspector-head"><span>Свойства</span></header><div id="inspector" class="rightbar"></div></aside><button id="inspector-toggle" data-action="toggle-right" class="inspector-toggle" title="Скрыть свойства" aria-label="Скрыть свойства"></button></main>`;
- $('.topbar').insertAdjacentHTML('afterend','<div class="sheet-strip"><nav id="sheet-bar" aria-label="Листы документа"></nav><button id="show-runs" type="button"></button></div>');
+ $('.topbar').insertAdjacentHTML('afterend','<div class="sheet-strip"><nav id="sheet-bar" aria-label="Листы документа"></nav></div>');
  $('#world').insertAdjacentHTML('beforeend','<svg id="run-overlay" aria-hidden="true"></svg>');
- $('.right-panel').insertAdjacentHTML('beforeend','<section id="run-panel" aria-label="Прогоны" hidden></section>');
+ $('#inspector').setAttribute('role','tabpanel');$('#inspector').setAttribute('aria-labelledby','properties-tab');
+ $('.right-panel').insertAdjacentHTML('beforeend',`<section id="run-panel" role="tabpanel" aria-labelledby="runs-tab" hidden></section><div class="panel-tabs" role="tablist" aria-label="Правая панель"><button id="properties-tab" role="tab" aria-controls="inspector" type="button">${uiIcon('settings')}<span>Свойства</span></button><button id="runs-tab" role="tab" aria-controls="run-panel" type="button">${uiIcon('run')}<span>Прогоны</span><span class="run-count" aria-hidden="true"></span></button></div>`);
  $('#sheet-bar').addEventListener('click',e=>{const b=e.target.closest('[data-sheet-tab]');if(b)openSheet(Number(b.dataset.sheetTab));});
- $('#show-runs').onclick=toggleRunPanel;
+ $('#properties-tab').onclick=()=>selectRightTab(false);
+ $('#runs-tab').onclick=()=>selectRightTab(true);
+ $('.panel-tabs').onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();e.stopPropagation();const runs=e.key==='End'||(e.key!=='Home'&&!runUI.open);selectRightTab(runs);$(runs?'#runs-tab':'#properties-tab').focus();}};
  $('#run-panel').addEventListener('click',caught(handleRunPanelClick));
  $('#run-panel').addEventListener('change',onRunSettings);
  const app=$('#app');app.removeEventListener('click',onAppClick);app.addEventListener('click',onAppClick);app.removeEventListener('change',onChange);app.addEventListener('change',onChange);app.ondragover=null;app.ondrop=null;
  const stage=$('#stage');stage.addEventListener('pointerdown',onPointerDown);stage.addEventListener('wheel',onWheel,{passive:false});stage.addEventListener('dblclick',onDoubleClick);stage.addEventListener('contextmenu',contextMenu);stage.addEventListener('dragover',e=>e.preventDefault());stage.addEventListener('drop',onDrop);
  if(!S.eventsBound){S.eventsBound=true;document.addEventListener('keydown',onKey);document.addEventListener('keyup',e=>{if(e.code==='Space')S.space=false;});
+  window.addEventListener('blur',()=>{S.space=false;});
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)S.space=false;});
   $('#modal-root').addEventListener('click',e=>{const x=e.target.closest('[data-open-material]');if(x)openMaterial(x.dataset.openMaterial).catch(err=>toast(err.message));});
   window.addEventListener('resize',()=>{if(!S.home&&$('#stage'))renderScene();});window.addEventListener('beforeunload',e=>{if(!S.readOnly&&(S.dirty||S.fileDirty)){e.preventDefault();e.returnValue='';}});
   document.addEventListener('pointerdown',e=>{if(S.popover&&!e.target.closest('#mode-popover,[data-action="align-menu"],[data-action="layout-modes"]'))closePopover();},true);
@@ -1609,16 +1808,16 @@ Object.assign(S,{inspectorSections:{},placement:null,addingBusPair:null});
 const typeLabels={comment:'Комментарий',block:'Этап',decision:'Условие',note:'Примечание',text:'Текст',table:'Таблица',image:'Изображение',ellipse:'Событие'};
 function iconSource(ic){return ic.src||assetURL(mat(ic.material))||'';}
 function nodeHTML(n,print=false){
- const badgeIds=[...new Set(n.materials||[])].filter(id=>mat(id)),counts={};for(const id of badgeIds){const k=mat(id).kind;counts[k]=(counts[k]||0)+1;}
+ const badgeIds=nodeSourceIds(n),sourceHeight=!print&&badgeIds.length?measureSources(n,badgeIds):0;
  const focusing=print?null:S.branchFocus,branchStart=focusing?.target.nodeId===n.id;
  const isTable=!!n.table,isDiamond=n.type==='decision',isComment=n.type==='comment',picked=S.selected.has(n.id)&&!print&&!focusing;
  const body=isTable?`<div class="table-title">${label(n)}</div>${!focusing&&S.folded.has(n.id)?'<div class="summary-sub" style="padding:8px">Таблица свёрнута</div>':tableHTML(n)}`:n.type==='image'?`<img class="photo" draggable="false" alt="${esc(n.title)}" src="${esc(assetURL(mat(n.imageMaterial)))}">`:`<div class="node-label" style="text-align:${esc(n.align||'center')};font-weight:${n.bold?'700':'400'};font-style:${n.italic?'italic':'normal'}">${label(n)}</div>`;
  const handles=print||focusing||S.readOnly||n.editLocked||n._ghost?'':C.visiblePorts(n,page().edges).map(p=>`<span role="button" tabindex="0" class="port ${p.occupied?'occupied':'free'} ${p.rowId?'row-port':''} ${S.pendingPort?.node===n.id&&C.samePort(n,S.pendingPort.port,p.id)?'pending':''}" data-port="${esc(p.id)}" data-owner="${esc(n.id)}" aria-label="${esc(portDescription(n,p))}" title="${esc(portDescription(n,p))} · ${p.occupied?'занят':'свободен'}" style="left:${p.x*n.w-(isDiamond?0:1)}px;top:${p.y*n.h-(isDiamond?0:1)}px">+</span>`).join('')+(!n.locked?`<span class="resize" data-resize="${esc(n.id)}" ${n.autoSize?'hidden':''}></span>`:'');
  const attached=(S.visibility.icons||print?n.icons||[]:[]).map((ic,i)=>`<span class="icon-object ${picked&&!S.readOnly?'icon-editable':''} ${picked&&S.selectedIcon===i&&S.iconEdit?'icon-picked':''}" data-icon-index="${i}" data-icon-node="${esc(n.id)}" style="left:${ic.x??Math.max(0,n.w-(ic.w||36)-8)}px;top:${ic.y??Math.max(0,n.h-(ic.h||36)-8)}px;width:${ic.w||36}px;height:${ic.h||ic.w||36}px"><img draggable="false" class="attached-icon" src="${esc(iconSource(ic))}" alt="${esc(ic.glyph||'Иконка')}" title="Перетащите иконку; размер — за нижний правый угол">${picked&&S.iconEdit&&!S.readOnly?'<span class="icon-size-grip" data-icon-resize="true"></span>':''}</span>`).join('');
- const badges=!print&&badgeIds.length?`<div class="material-badges ${isTable?'table-material-footer':''}" style="height:${measureSources(n)}px">${sourceSummary(n,badgeIds)}</div>`:'';
+ const badges=sourceHeight?`<div class="material-badges ${isTable?'table-material-footer':''}" style="height:${sourceHeight}px">${sourceSummary(n,badgeIds)}</div>`:'';
  const toggle=!print&&!focusing&&!n._ghost&&n.collapsible?`<button type="button" class="collapse-node ${collapsed().has(n.id)?'is-collapsed':''}" data-collapse-node="${esc(n.id)}" title="${collapsed().has(n.id)?'Раскрыть цепочку. Скрыто блоков: '+(n.hiddenCount||0):'Свернуть продолжение цепочки'}" aria-label="${collapsed().has(n.id)?'Раскрыть':'Свернуть'} продолжение: ${esc(n.title)}${n.hiddenCount?' · скрыто '+n.hiddenCount+' блоков':''}" aria-expanded="${!collapsed().has(n.id)}">${uiIcon(collapsed().has(n.id)?'chevronRight':'chevronDown')}${n.hiddenCount?`<span>${n.hiddenCount}</span>`:''}</button>`:'';
  const corner=Math.min(18,n.w/4,n.h/4),outline=isDiamond?`<svg class="diamond-shape" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon points="50,1 99,50 50,99 1,50" fill="${esc(n.fill||'#fff')}" stroke="${esc(n.stroke||'#9aa8bf')}" stroke-width="1.3" vector-effect="non-scaling-stroke"/></svg>`:isComment?`<svg class="comment-shape" viewBox="0 0 ${n.w} ${n.h}" preserveAspectRatio="none" aria-hidden="true"><path d="M1 1H${n.w-corner}L${n.w-1} ${corner}V${n.h-1}H1Z" fill="${esc(n.fill||'#fff')}" stroke="${esc(n.stroke||'#9aa8bf')}" stroke-width="1.3" vector-effect="non-scaling-stroke"/><path d="M${n.w-corner} 1V${corner}H${n.w-1}" fill="none" stroke="${esc(n.stroke||'#9aa8bf')}" stroke-width="1.3" vector-effect="non-scaling-stroke"/></svg>`:'';
- const h=n.h;return `<div class="node ${esc(n.type)} ${picked?'selected':''} ${branchStart?'branch-start':''} ${badgeIds.length?'has-materials':''} ${n.locked?'position-locked':''} ${n._ghost?'placement-node':''} ${n.anchorId?'anchored-image':''}" data-node="${esc(n.id)}" style="left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${h}px;background:${isDiamond?'transparent':esc(n.fill||'#fff')};border-color:${isDiamond?'transparent':esc(n.stroke||'#9aa8bf')};font-size:${n.fontSize||13}px;color:${esc(n.color||'#18283f')}">${print||focusing?'':quickTableTools(n)}${outline}<div class="node-body" ${badgeIds.length&&!isTable&&!isDiamond?`style="padding-bottom:${measureSources(n)}px"`:''}>${body}</div>${attached}${badges}${handles}${toggle}${print||focusing?'':rowToggleMarkup(n)}${focusing?'':nodeStateIcons(n,print)}</div>`;
+ const h=n.h;return `<div class="node ${esc(n.type)} ${picked?'selected':''} ${branchStart?'branch-start':''} ${badgeIds.length?'has-materials':''} ${n.locked?'position-locked':''} ${n._ghost?'placement-node':''} ${n.anchorId?'anchored-image':''}" data-node="${esc(n.id)}" style="left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${h}px;background:${isDiamond?'transparent':esc(n.fill||'#fff')};border-color:${isDiamond?'transparent':esc(n.stroke||'#9aa8bf')};font-size:${n.fontSize||13}px;color:${esc(n.color||'#18283f')}">${print||focusing?'':quickTableTools(n)}${outline}<div class="node-body" ${sourceHeight&&!isTable&&!isDiamond?`style="padding-bottom:${sourceHeight+6}px"`:''}>${body}</div>${attached}${badges}${handles}${toggle}${print||focusing?'':rowToggleMarkup(n)}${focusing?'':nodeStateIcons(n,print)}</div>`;
 }
 function segmentGrips(e,p){
  if(S.readOnly||S.branchFocus||e.proxy||p.bus||e.style==='straight')return '';
@@ -1632,17 +1831,22 @@ function v076RenderEdges(){
  const defs='<defs><marker id="arrowhead" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M0 0L8 4L0 8Z" fill="context-stroke"/></marker></defs>';
  const draw=(p,selected=false,arrow=false,dashed=false,style='orthogonal',arrowStart=false,id='',color='',width=2)=>`<path ${id?`data-edge="${esc(id)}"`:''} style="stroke-width:${width}px;${color?'stroke:'+esc(color):''}" class="edge ${selected?'selected':''} ${style==='wire'?'wire-edge':''}" d="${p.d}" ${arrow?'marker-end="url(#arrowhead)"':''} ${arrowStart?'marker-start="url(#arrowhead)"':''} ${dashed?'stroke-dasharray="6 4"':''}/>`;
  let paint='',hits='',grips='';
+ const mutedBuses=new Set(S.display.buses.filter(b=>b.branchMuted).map(b=>b.id));
  for(const b of bundle.buses){const obj=page().buses.find(x=>x.id===b.id),pick=S.selectedBuses?.has(b.id)||S.selectedBus===b.id||S.display.edges.filter(e=>e.bus===b.id).every(e=>S.selectedEdges.has(e.id));
+  if(mutedBuses.has(b.id))paint+='<g class="branch-muted">';
   paint+=draw(b.lead,pick,b.arrow,b.dashed,obj?.style,b.arrowStart,'',obj?.stroke,obj?.width||2)+draw(b.trunk,pick,false,b.dashed,obj?.style,false,'',obj?.stroke,obj?.width||2)+(b.segments||[]).map(p=>draw(p,pick,p.arrow,b.dashed,obj?.style,p.arrowStart,'',obj?.stroke,obj?.width||2)).join('');
   paint+=b.entries.map(x=>`<circle cx="${x.join.x}" cy="${x.join.y}" r="2.5" fill="${pick?'#555ce9':'#96a3ba'}" pointer-events="none"/>`).join('');
+  if(mutedBuses.has(b.id))paint+='</g>';
   hits+=`<path class="edge-hit" data-bus="${esc(b.id)}" d="${b.lead.d} ${b.trunk.d}"/>`;
   if(pick&&!S.readOnly&&!obj?.editLocked)grips+=`<circle class="bus-handle" data-bus-handle="${esc(b.id)}" cx="${b.handle.x}" cy="${b.handle.y}" r="${6/S.view.z}"><title>Переместить общую линию</title></circle>`;
  }
  for(const e of S.display.edges){const p=bundle.routes.get(e.id);if(!p)continue;const picked=S.selectedEdge===e.id||S.selectedEdges.has(e.id),busPicked=e.bus&&(S.selectedBus===e.bus||S.selectedBuses?.has(e.bus));
+  if(e.branchMuted)paint+='<g class="branch-muted">';
   if(p.paint!==false)paint+=draw(p,picked||busPicked,e.arrow&&!p.busIncoming,e.dashed,e.style,e.arrowStart&&!p.busOutgoing,e.id,e.stroke,e.width||2);
   else if(picked)paint+=draw(p,true,false,e.dashed,e.style,false,'',e.stroke);
   hits+=`<path class="edge-hit" data-edge="${esc(e.id)}" style="stroke-width:${17/Math.max(.05,S.view.z)}px" d="${p.hitD||p.d}"/>`;
   paint+=edgeLabelHTML(e,p);
+  if(e.branchMuted)paint+='</g>';
   if(picked&&!S.readOnly&&!e.editLocked&&!e.proxy&&!p.bus){grips+=segmentGrips(e,p)+(p.controls||[]).map((w,i)=>`<circle class="route-handle" data-route-edge="${esc(e.id)}" data-route-index="${i}" cx="${w.x}" cy="${w.y}" r="${6/Math.max(.3,S.view.z)}"/>`).join('');}
  }
  setSceneMarkup($('#edges'),defs+paint+hits+grips);
@@ -1861,8 +2065,12 @@ function fileIcon(m){const t=fileType(m),mark=({pdf:'<path d="M7 15h10M7 18h7"/>
  const paper=['cell','link','node'].includes(t)?'':'<path d="M5 2h9l5 5v15H5zM14 2v6h5"/>';
  return `<span class="file-type-icon file-${t}" title="${FILE_LABELS[t]}"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">${paper}${mark}</svg></span>`;
 }
-function materialChip(id,compact=false,override=null){const m=override||findMaterial(id),title=m?.title||'Материал не найден',t=fileType(m);
- return `<span class="file-chip ${compact?'compact-chip':''} file-${t}" data-material-chip="${esc(id)}"><button class="file-chip-main" data-material-action="preview" data-material-id="${esc(id)}" title="Просмотреть: ${esc(title)}">${fileIcon(m)}<span class="file-chip-name">${esc(title)}</span></button><span class="file-chip-actions"><button data-material-action="external" data-material-id="${esc(id)}" title="${t==='cell'||t==='page'?'Перейти':'Открыть отдельно'}" aria-label="Открыть отдельно">${uiIcon('external')}</button><button data-material-action="location" data-material-id="${esc(id)}" title="Местоположение / адрес" aria-label="Местоположение">${uiIcon('folder')}</button></span></span>`;
+function materialChip(id,compact=false,override=null){
+ const m=override||findMaterial(id),title=m?.title||'Материал не найден',t=fileType(m),internal=internalMaterial(m);
+ const label=internal?'Перейти к источнику':'Просмотреть в Studio';
+ const original=m?.kind==='link'?'Открыть ссылку':'Открыть оригинал';
+ const actions=internal?'':`<span class="file-chip-actions"><button data-material-action="external" data-material-id="${esc(id)}" title="${original}" aria-label="${original}">${uiIcon('external')}</button><button data-material-action="location" data-material-id="${esc(id)}" title="Расположение источника" aria-label="Расположение источника">${uiIcon('folder')}</button></span>`;
+ return `<span class="file-chip ${compact?'compact-chip':''} file-${t}" data-material-chip="${esc(id)}"><button class="file-chip-main" data-material-action="preview" data-material-id="${esc(id)}" title="${label} — ${esc(title)}">${fileIcon(m)}<span class="file-chip-name">${esc(title)}</span></button>${actions}</span>`;
 }
 function cellLinksMarkup(cell){const ids=legacyCellIds(cell);return ids.length?`<div class="cell-links">${ids.map(id=>cellSourceChip(cell,id)).join('')}</div>`:'';}
 function cellContentMarkup(cell){return `<div class="cell-text">${cell.html?cleanHTML(cell.html):richText(cell.text)}</div>${cellLinksMarkup(cell)}`;}
@@ -1879,8 +2087,8 @@ function measureCell(n,cell,width){
  if(cellSizeCache.size>2400)cellSizeCache.clear();cellSizeCache.set(key,h);return h;
 }
 C.measureCell=measureCell;
-function materialControls(n){const ids=[...new Set(n.materials||[])];return `${S.readOnly?'':command('attach','registry','Прикрепить материалы к блоку','Прикрепить','property-wide')}<div class="property-materials">${ids.map(id=>`<div class="property-file-row">${materialChip(id)}${S.readOnly?'':`<button class="ui-command" data-detach="${esc(id)}" title="Отвязать от блока">${uiIcon('close')}</button>`}</div>`).join('')||'<small>Нет прикреплённых материалов</small>'}</div>`;}
-function showNodeMaterials(n,kind){const ms=[...new Set(n.materials||[])].map(findMaterial).filter(m=>m&&(!kind||m.kind===kind));modal('Источники блока',`<p class="sources-context">${richText(n.title)}</p><div class="sources-list">${ms.map(m=>materialChip(m.id)).join('')||'<p class="muted">Источников пока нет.</p>'}</div>`,S.readOnly||S.branchFocus?'':`<button id="sources-edit">${uiIcon('registry')} Открыть материалы</button>`,true);const dialog=$('.modal');dialog.classList.add('sources-dialog');makeDialogResizable(dialog,'sources');if($('#sources-edit'))$('#sources-edit').onclick=()=>registry(n.id);}
+function materialControls(n){const ids=nodeSourceIds(n);return `${S.readOnly?'':command('attach','registry','Прикрепить материалы к блоку','Прикрепить','property-wide')}<div class="property-materials">${ids.map(id=>`<div class="property-file-row">${materialChip(id)}${S.readOnly||!n.materials?.includes(id)?'':`<button class="ui-command" data-detach="${esc(id)}" title="Отвязать от блока">${uiIcon('close')}</button>`}</div>`).join('')||'<small>Нет прикреплённых материалов</small>'}</div>`;}
+function showNodeMaterials(n,kind){const ms=nodeSourceIds(n).map(findMaterial).filter(m=>m&&(!kind||m.kind===kind));modal('Источники блока',`<p class="sources-context">${richText(n.title)}</p><div class="sources-list">${ms.map(m=>materialChip(m.id)).join('')||'<p class="muted">Источников пока нет.</p>'}</div>`,S.readOnly||S.branchFocus?'':`<button id="sources-edit">${uiIcon('registry')} Открыть материалы</button>`,true);const dialog=$('.modal');dialog.classList.add('sources-dialog');makeDialogResizable(dialog,'sources');if($('#sources-edit'))$('#sources-edit').onclick=()=>registry(n.id);}
 
 function jumpToCell(target){const hit=C.cellTarget(S.project,target);if(!hit)return toast('Ячейка удалена или отсутствует в этом документе');
  closeModal();switchPage(S.project.pages.indexOf(hit.page));S.folded.delete(hit.node.id);focusNode(hit.node.id);
@@ -1895,10 +2103,9 @@ function jumpToCell(target){const hit=C.cellTarget(S.project,target);if(!hit)ret
 async function refreshMaterialRegistry(){
  if(!S.server)return;const ctx=operationContext();if(!S.readOnly)await save();if(!contextCurrent(ctx)||S.dirty)return;const version=S.editVersion,materials=S.pub?(await request('/api/published/'+encodeURIComponent(S.pub))).materials:await request('/api/materials');if(contextCurrent(ctx)&&version===S.editVersion&&!S.dirty){C.validatePresentation({materials});S.project.materials=materials;}
 }
-async function openMaterial(id){const ctx=operationContext();await refreshMaterialRegistry();if(!contextCurrent(ctx))return;const m=findMaterial(id);if(!m)return toast('Материал не найден');
+async function openMaterial(id){const ctx=operationContext(),from=currentModal;await refreshMaterialRegistry();if(!contextCurrent(ctx)||from!==currentModal)return;const m=findMaterial(id);if(!m)return toast('Материал не найден');
  if(m.kind==='node')return jumpToNode(m.target);if(m.kind==='cell')return jumpToCell(m.target);
  if(m.kind==='page'||m.url?.startsWith('data:page/id,')){const pid=m.target?.pageId||m.url?.split(',')[1],index=S.project.pages.findIndex(p=>p.id===pid);if(index<0)return toast('Связанная страница отсутствует');closeModal();closeFilePopover();switchPage(index);S.selected.clear();S.selectedEdges.clear();S.selectedEdge=S.selectedBus=S.selectedDrawing=null;S.selectedDrawings?.clear();S.selectedBuses?.clear();render();fit();return;}
- if(m.kind==='link'&&!m.embed||m.kind==='document'&&!m.previewPath&&!m.previewNativePath&&!m.previewURL&&!m.previewMaterial&&!m.previewAsset)return materialExternal(id);
  return v5OpenMaterial(id);
 }
 function locationText(m){if(m.kind==='page'||m.kind==='node'){const hit=C.internalTarget(S.project,m);return hit?hit.page.title+(hit.node?' / '+hit.node.title:' / весь лист'):'Цель внутренней ссылки удалена';}if(m.kind==='cell'){const hit=C.cellTarget(S.project,m.target);return hit?`${hit.page.title} / ${hit.node.title} / ячейка ${hit.row+1}:${hit.col+1}`:'Целевая ячейка не найдена';}return m.nativePath||m.path||m.url||m.filename||'Внутреннее хранилище';}
@@ -1950,13 +2157,32 @@ function wrappedCellMarkup(cell,mode){const key=JSON.stringify([cell,mode,C.cell
 }
 function addSelectedBusEdges(){if(S.selectedEdge)S.selectedEdges.add(S.selectedEdge);if(S.selectedBus)for(const e of page().edges)if(e.bus===S.selectedBus)S.selectedEdges.add(e.id);}
 
-function sourceSummary(n,ids){const counts=new Map();for(const id of ids){const m=findMaterial(id),key=['page','node','cell'].includes(m?.kind)?'internal':fileType(m);const old=counts.get(key);counts.set(key,{m,count:(old?.count||0)+1});}return `<button class="source-summary" data-node-material="${esc(n.id)}" title="Открыть список источников"><span>Источники:</span>${[...counts].map(([key,{m,count}])=>`<span class="source-count">${fileIcon(m)} ${count} ${key==='internal'?(count===1?'внутренняя ссылка':'внутренние ссылки'):key==='pdf'?'PDF':key==='doc'?'Word':key==='link'?(count%10===1&&count%100!==11?'ссылка':count%10>=2&&count%10<=4&&!(count%100>=12&&count%100<=14)?'ссылки':'ссылок'):FILE_LABELS[key]}</span>`).join('<span class="source-comma">,</span>')}</button>`;}
+function nodeSourceIds(n){
+ const inline=n.table?[]:C.inlineMaterialIds(n).filter(id=>{const m=findMaterial(id);return m&&!internalMaterial(m);});
+ return [...new Set([...(n.materials||[]),...inline])].filter(findMaterial);
+}
+function sourceSummary(n,ids){
+ const counts=new Map();let external=0;
+ for(const id of ids){
+  const m=findMaterial(id),internal=internalMaterial(m),key=internal?'internal':fileType(m),old=counts.get(key);
+  if(!internal)external++;
+  counts.set(key,{m,count:(old?.count||0)+1});
+ }
+ const label=external?(external===1?'Внешний источник':'Внешние источники'):'Внутренние ссылки';
+ const types=[...counts].map(([key,{m,count}])=>{
+  const type=({internal:'Внутренние',pdf:'PDF',doc:'Word',link:'Веб'})[key]||FILE_LABELS[key];
+  if(!external&&key==='internal')return `<span class="source-count">${fileIcon(m)} ${count}</span>`;
+  return `<span class="source-count">${fileIcon(m)} ${type}${count>1?' · '+count:''}</span>`;
+ }).join('');
+ return `<button class="source-summary" data-node-material="${esc(n.id)}" title="Открыть список источников"><span class="${external?'external-source-label':''}">${label}</span>${types}</button>`;
+}
 function deleteSegment(id,index){const edge=page().edges.find(e=>e.id===id),shown=S.display.edges.find(e=>e.id===id);if(!edge||!shown||S.readOnly)return;try{const out=C.removeVisibleSegment(shown,new Map(S.display.nodes.map(n=>[n.id,n])),index,S.bundle.routes.get(id));if(!C.routeEditAllowed(S.display,id,out))throw Error('Удаление изгиба создаёт пересечение. Прежний маршрут сохранён.');S.selectedSegment=null;change(()=>copyRoute(edge,out));}catch(e){toast(e.message);}}
 function segmentDeleteControls(e){const shown=S.display?.edges.find(x=>x.id===e.id),route=shown&&C.edgePath(shown,new Map(S.display.nodes.map(n=>[n.id,n])));return route?`<div class="segment-delete-list">${route.points.slice(1,-2).map((_,i)=>`<button data-delete-segment="${i+1}" data-delete-edge="${esc(e.id)}" title="Удалить сегмент ${i+1}">${uiIcon('trash')} Сегмент ${i+1}</button>`).join('')}</div>`:'';}
 let nodeProbe,sourceProbe,minWidthProbe;const nodeSizeCache=new Map(),sourceSizeCache=new Map(),wordWidthCache=new Map();
 function rememberSize(cache,key,value){if(cache.size>4000)cache.clear();cache.set(key,value);return value;}
 function measureNode(n){
- const key=JSON.stringify([n.title,n.html,n.fontSize,n.bold,n.italic,n.type,n.autoBaseW||n.w,n.autoBaseH||n.h,n.materials?.map(findMaterial)]);if(nodeSizeCache.has(key))return nodeSizeCache.get(key);
+ const sources=nodeSourceIds(n);
+ const key=JSON.stringify([n.title,n.html,n.fontSize,n.bold,n.italic,n.type,n.autoBaseW||n.w,n.autoBaseH||n.h,sources.map(findMaterial)]);if(nodeSizeCache.has(key))return nodeSizeCache.get(key);
  if(!nodeProbe){nodeProbe=document.createElement('div');nodeProbe.className='node-size-probe';nodeProbe.setAttribute('aria-hidden','true');document.body.append(nodeProbe);}
  const font=n.fontSize||13,diamond=n.type==='decision',bw=n.autoBaseW||n.w,bh=n.autoBaseH||n.h||80;
  nodeProbe.style.cssText=`position:fixed;left:-100000px;top:0;visibility:hidden;width:max-content;max-width:none;font:${font}px/1.32 'Segoe UI',Arial,sans-serif;font-weight:${n.bold?'700':'400'};font-style:${n.italic?'italic':'normal'};white-space:pre-wrap;overflow-wrap:normal;`;
@@ -1967,11 +2193,11 @@ function measureNode(n){
   let low=1,high=1;while(!fits(high)&&high<64)high*=1.5;
   if(high>1)for(let i=0;i<10;i++){const mid=(low+high)/2;if(fits(mid))high=mid;else low=mid;}
   w=bw*high;h=bh*high;
- }else{const fits=scale=>{nodeProbe.style.width=Math.max(20,bw*scale-28)+'px';nodeProbe.style.overflowWrap='normal';const footer=n.materials?.length?measureSources({...n,w:bw*scale}):0;return nodeProbe.scrollWidth<=nodeProbe.clientWidth+1&&nodeProbe.getBoundingClientRect().height+28+footer<=bh*scale;};let low=1,high=1;while(!fits(high)&&high<64)high*=1.35;if(high>1)for(let i=0;i<12;i++){const mid=(low+high)/2;if(fits(mid))high=mid;else low=mid;}w=bw*high;h=bh*high;}
+ }else{const fits=scale=>{nodeProbe.style.width=Math.max(20,bw*scale-28)+'px';nodeProbe.style.overflowWrap='normal';const footer=sources.length?measureSources({...n,w:bw*scale},sources):0;return nodeProbe.scrollWidth<=nodeProbe.clientWidth+1&&nodeProbe.getBoundingClientRect().height+28+footer<=bh*scale;};let low=1,high=1;while(!fits(high)&&high<64)high*=1.35;if(high>1)for(let i=0;i<12;i++){const mid=(low+high)/2;if(fits(mid))high=mid;else low=mid;}w=bw*high;h=bh*high;}
  return rememberSize(nodeSizeCache,key,{w,h});
 }
-function measureSources(n){const ids=[...new Set(n.materials||[])].filter(findMaterial);if(!ids.length)return 0;const key=JSON.stringify([n.w,ids.map(id=>[id,fileType(findMaterial(id))])]);if(sourceSizeCache.has(key))return sourceSizeCache.get(key);
- if(!sourceProbe){sourceProbe=document.createElement('div');sourceProbe.setAttribute('aria-hidden','true');document.body.append(sourceProbe);}sourceProbe.style.cssText=`position:fixed;left:-100000px;top:0;visibility:hidden;width:${Math.max(30,n.w-14)}px;font:11px/1.3 'Segoe UI',Arial,sans-serif`;sourceProbe.innerHTML=sourceSummary(n,ids);return rememberSize(sourceSizeCache,key,Math.max(40,Math.ceil(sourceProbe.getBoundingClientRect().height)+12));
+function measureSources(n,ids=nodeSourceIds(n)){if(!ids.length)return 0;const key=JSON.stringify([n.w,!!n.table,ids.map(id=>{const m=findMaterial(id);return [id,fileType(m),internalMaterial(m)];})]);if(sourceSizeCache.has(key))return sourceSizeCache.get(key);
+ if(!sourceProbe){sourceProbe=document.createElement('div');sourceProbe.setAttribute('aria-hidden','true');document.body.append(sourceProbe);}sourceProbe.style.cssText=`position:fixed;left:-100000px;top:0;visibility:hidden;width:${Math.max(30,n.w-14)}px;font:11px/1.3 'Segoe UI',Arial,sans-serif`;sourceProbe.innerHTML=sourceSummary(n,ids);const height=Math.ceil(sourceProbe.getBoundingClientRect().height);return rememberSize(sourceSizeCache,key,n.table?Math.max(40,height+12):height+4);
 }
 function fitTableWords(n){
  if(!n.table||n.table.wordWrap==='hyphenate')return n;
@@ -2099,7 +2325,7 @@ function v078OnDoubleClick(e){const bus=busAtTarget(e.target);if(bus){e.preventD
 function v076OnKey(e){if(!S.project||S.home)return v074OnKey(e);if(!currentModal&&!e.target.closest?.('input,textarea,select,[contenteditable=true]')){if((e.code==='KeyM'||e.key.toLowerCase()==='m')&&!e.ctrlKey&&!e.metaKey){e.preventDefault();setTool('marquee');return;}if(selectedObject()?.editLocked&&['Delete','Backspace','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();return;}if(['Delete','Backspace'].includes(e.key)&&!S.selectedSegment&&Object.values(selectionV075()).reduce((a,b)=>a+b.length,0)>1){e.preventDefault();action('delete');return;}}return v074OnKey(e);}
 function deleteSelectionV075(){const sel=selectionV075();const result=C.deleteSelection(page(),sel);if(result===page())return toast('Выделение защищено от правки');change(()=>{S.project.pages[S.pageIndex]=result;S.selected.clear();S.selectedEdges.clear();S.selectedDrawings.clear();S.selectedBuses.clear();S.selectedEdge=S.selectedBus=S.selectedDrawing=null;});}
 async function v076Action(a){if(a.startsWith('combine-')&&[...S.selectedEdges].some(id=>{const e=page().edges.find(e=>e.id===id);return e?.editLocked||page().buses.find(b=>b.id===e?.bus)?.editLocked}))return toast('Снимите защиту со связей перед объединением');if(a==='draw-settings'){closeModal();return setTool('pen');}if(a==='delete'&&!S.readOnly){if(S.selectedSegment){if(selectedObject()?.editLocked)return;return v074Action(a);}return deleteSelectionV075();}const edits=new Set(['bold','italic','auto-height','edit-text','table-edit','emoji-text','icon-upload','remove-icon','move-icons','attach','route-clear','route-add','align-connection','bus-add-branch','bus-add-existing','bus-uncombine','dissolve-bus','enable-collapse','lock','unlock','combine-auto','combine-out','combine-in','duplicate']);if(selectedObject()?.editLocked&&edits.has(a)&&a!=='duplicate')return toast('Элемент защищён от правки');return v074Action(a);}
-function renderInk(){v074RenderInk();for(const el of $$('[data-drawing]',$('#ink')))el.style.filter=S.selectedDrawings.has(el.dataset.drawing)||S.selectedDrawing===el.dataset.drawing?'drop-shadow(0 0 3px #555ce9)':'';}
+function renderInk(){v074RenderInk();const muted=new Set(S.display?.drawings?.filter(s=>s.branchMuted).map(s=>s.id)||[]);for(const el of $$('[data-drawing]',$('#ink'))){el.classList.toggle('branch-muted',muted.has(el.dataset.drawing));el.style.filter=S.selectedDrawings.has(el.dataset.drawing)||S.selectedDrawing===el.dataset.drawing?'drop-shadow(0 0 3px #555ce9)':'';}}
 
 /* 0.7.7: cell properties, themes, property painter and connection groups. */
 Object.assign(UI_ICONS,{painter:'<path d="M4 3h12v7H4zM16 6h4v8h-9v7M4 5H2v3h2"/>',symmetry:'<path d="M12 2v20M8 5H3v5h5zM16 5h5v5h-5zM8 14H3v5h5zM16 14h5v5h-5z"/>'});
@@ -2126,7 +2352,7 @@ function v078RenderInspector(){
  watchSections();
 }
 function renderTools(){v076RenderTools();const rail=$('#tools');if(!rail||S.readOnly)return;const b=document.createElement('button');b.dataset.tool='painter';b.className=S.tool==='painter'?'active':'';b.title='Копировать свойства';b.setAttribute('aria-label',b.title);b.innerHTML=uiIcon('painter');rail.querySelector('[data-tool="pan"]')?.after(b);}
-async function setTool(t){if(S.tool==='painter'&&t!=='painter'){S.propertyPainter.source=null;$$('.painter-source').forEach(el=>el.classList.remove('painter-source'));}
+async function setTool(t){S.space=false;if(S.tool==='painter'&&t!=='painter'){S.propertyPainter.source=null;$$('.painter-source').forEach(el=>el.classList.remove('painter-source'));}
  if(t==='painter'){if(S.readOnly)return;finishQuickEdit();stopPlacement();S.tool=t;S.pendingPort=null;renderTools();renderInspector();$('#stage').style.cursor='copy';return;}return v076SetTool(t);}
 function painterTarget(target){const td=target.closest('[data-table-cell]'),el=target.closest('[data-node]');
  if(td&&el){const n=page().nodes.find(n=>n.id===el.dataset.node),[r,c]=td.dataset.tableCell.split(',').map(Number);const cell=n.table.cells[r]?.[c];if(cell)return {obj:cell,kind:'cell',parent:n,el:td};}
@@ -2329,6 +2555,7 @@ function onPointerDown(e){
 }
 function onKey(e){
  if((e.ctrlKey||e.metaKey)&&(e.code==='KeyS'||e.key?.toLowerCase()==='s')&&S.project&&!S.home){e.preventDefault();if(currentModal){toast('Сначала примените или отмените изменения в открытом окне.');return;}saveDocument(e.shiftKey).catch(err=>toast(err.message,9000));return;}
+ if(e.key==='Escape')S.space=false;
  if(e.key==='Escape'&&closeCanvasContext){e.preventDefault();closeCanvasContext();return;}
  if(S.branchFocus&&!currentModal){
   if(e.key==='Escape'){e.preventDefault();exitBranchFocus();}
@@ -2360,8 +2587,8 @@ function openSheet(index){
 }
 
 function renderSheetStrip(){
- const bar=$('#sheet-bar'),toggle=$('#show-runs');
- if(!bar||!toggle)return;
+ const bar=$('#sheet-bar');
+ if(!bar)return;
  const active=bar.contains(document.activeElement);
  const next=S.project.pages.map((p,i)=>`<button type="button" data-sheet-tab="${i}" title="${esc(p.title)}"${i===S.pageIndex?' aria-current="page"':''}>${esc(p.title)}</button>`).join('');
  if(bar.dataset.buttons!==next){
@@ -2370,21 +2597,11 @@ function renderSheetStrip(){
   current?.scrollIntoView({block:'nearest',inline:'nearest'});
   if(active)current?.focus({preventScroll:true});
  }
- const count=S.project.runs?.length||0;
- toggle.hidden=S.readOnly&&!count;
- toggle.setAttribute('aria-expanded',String(runUI.open&&!S.rightHidden));
- toggle.setAttribute('aria-controls','run-panel');
- toggle.innerHTML=uiIcon('run')+'<span>Прогоны</span>'+(count?`<span class="run-count">${count}</span>`:'');
 }
 
-function toggleRunPanel(){
- runUI.open=!runUI.open||S.rightHidden;
- if(runUI.open){
-  if(S.branchFocus){resetBranchFocus();renderScene();fit();}
-  S.rightHidden=false;
- }
- if(!runUI.open&&runPlayback()?.playing)pauseRun();
- applyPanelState();renderRunPanel();renderSheetStrip();
+function selectRightTab(runs){
+ if(runUI.open===runs)return;
+ runUI.open=runs;renderRunPanel();
 }
 
 function renderRunPanel(){
@@ -2393,8 +2610,12 @@ function renderRunPanel(){
  panel.hidden=!runUI.open;
  $('#inspector').hidden=runUI.open;
  $('.inspector-head span').textContent=runUI.open?'Прогоны':'Свойства';
+ for(const [button,active] of [[$('#properties-tab'),!runUI.open],[$('#runs-tab'),runUI.open]]){
+  button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;
+ }
+ const runs=S.project.runs||[],count=$('#runs-tab .run-count');
+ count.hidden=!runs.length;count.textContent=runs.length||'';
  if(!runUI.open)return;
- const runs=S.project.runs||[];
  const run=runs.find(r=>r.id===runUI.selected)||runs[0];
  runUI.selected=run?.id||'';
  const create=!S.readOnly?'<button type="button" class="run-new" data-run-action="new">＋ Новый прогон</button>':'';
@@ -2622,7 +2843,10 @@ function runFrame(now){
  if(p.last)p.elapsed+=Math.min(100,now-p.last)*runUI.speed;
  p.last=now;
  if(p.elapsed>=p.duration){nextRunStep(p);if(p.reduced)showRunStart(p,false);}
- else if(!p.reduced)followRunPoints(drawRunMarkers(p));
+ else{
+  const points=drawRunMarkers(p);
+  if(!p.reduced)followRunPoints(points);
+ }
  if(p.playing)p.raf=requestAnimationFrame(runFrame);
 }
 

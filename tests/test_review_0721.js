@@ -3,7 +3,15 @@ const assert=require('node:assert/strict'),{app,deferred,project,page,node,Core:
 const tests=[];const test=(name,run)=>tests.push([name,run]);const turn=()=>new Promise(r=>setImmediate(r));
 const edge=(id,source='a',target='b',extra={})=>({id,source,target,sourcePort:'right',targetPort:'left',arrow:true,label:'OLD',...extra});
 const setup=async(p=project(),server=false)=>{const a=app();a.context.fixture=p;await a.run("activateDocument(fixture,{name:'Test.html',server:"+server+"})");return a};
-const viewer=a=>a.run("modal=(title,content)=>window.viewer={title,content};document.querySelector=q=>q==='#back-registry'?{}:q==='.modal'?{querySelector:()=>null}:null");
+const viewer=a=>a.run(`{
+ const button={insertAdjacentHTML(){}},head={
+  querySelector:q=>q==='.spacer'?{remove(){}}:button,
+  insertAdjacentHTML:(_,html)=>window.viewer.header=html
+ };
+ const dialog={classList:{add(){}},querySelector:q=>q==='.modal-head'?head:null};
+ modal=(title,content)=>{currentModal={};window.viewer={title,content};};
+ document.querySelector=q=>q==='.modal'?dialog:['#back-registry','#viewer-bind-folder','#viewer-edit-path','#modal-root'].includes(q)?button:null;
+}`);
 test('N02 actual PDF opening has one guarded registry read',async()=>{
  const p=project();p.materials=[{id:'pdf',kind:'pdf',url:'https://example.test/a.pdf',version:1}];const a=await setup(p,true),gate=deferred();viewer(a);let calls=0;a.context.get=()=>{calls++;return gate.promise};a.run('request=get');const opening=a.run("openMaterial('pdf')");await turn();a.run("change(()=>S.project.materials.push({id:'new',version:1}))");gate.resolve(p.materials);await opening;assert.equal(calls,1);assert.equal(a.run('S.project.materials.length'),2);
 });
@@ -47,7 +55,7 @@ test('N14 original native path does not override a preview URL',async()=>{
  const p=project();p.materials=[{id:'m',nativePath:'C:/Original.docx',previewURL:'https://example.test/preview.pdf'}];const a=await setup(p);a.run("window.STUDIO_DESKTOP={call:()=>{throw Error('wrong native role')}}");assert.equal(await a.run("resolveMaterial(mat('m'),true)"),'https://example.test/preview.pdf');
 });
 test('N15 available PDF preview is displayed when the original is missing',async()=>{
- const p=project();p.materials=[{id:'m',title:'Word',kind:'document',path:'missing.docx',previewURL:'https://example.test/preview.pdf'}];const a=await setup(p);viewer(a);a.run("DOC.root={queryPermission:async()=> 'granted',getFileHandle:async()=>{throw new DOMException('missing','NotFoundError')}}");await a.run("openMaterial('m')");assert.match(a.context.window.viewer.content,/<iframe[^>]+preview.pdf/);assert.match(a.context.window.viewer.content,/Оригинал недоступен/);
+ const p=project();p.materials=[{id:'m',title:'Word',kind:'document',path:'missing.docx',previewURL:'https://example.test/preview.pdf'}];const a=await setup(p);viewer(a);a.run("DOC.root={queryPermission:async()=> 'granted',getFileHandle:async()=>{throw new DOMException('missing','NotFoundError')}}");await a.run("openMaterial('m')");assert.match(a.context.window.viewer.content,/<iframe[^>]+preview.pdf/);assert.match(a.context.window.viewer.header,/Оригинал недоступен/);
 });
 test('N16 inspector and bulk edits cannot change protected comb branches',async()=>{
  const p=project();p.pages[0].nodes.push(node('b'));p.pages[0].edges=[edge('e','a','b',{bus:'comb'}),edge('f','a','b',{bus:'comb'})];p.pages[0].buses=[{id:'comb',editLocked:true}];const a=await setup(p);a.run("S.selectedEdge='e'");const before=a.run('JSON.stringify(S.project)');a.run("onChange({target:{id:'edge-source-port',value:'top',dataset:{}}});onChange({target:{id:'edge-label',value:'NEW',dataset:{}}})");assert.equal(a.run('JSON.stringify(S.project)'),before);assert.equal(a.run('S.history.length'),0);assert.equal(a.run('S.dirty'),false);assert.equal(C.bulkPatch(p.pages[0],{edge:['e','f']},{label:'NEW'}).edges[0].label,'OLD');

@@ -109,6 +109,7 @@ function branchFixture() {
     const focusAt = async (id, r, c) => {
         await p.locator(`#nodes [data-node="${id}"] [data-table-cell="${r},${c}"] .cell-text`).click({button: 'right'});
         await p.locator('[data-context="isolate-branch"]').click();
+        await p.locator('[data-branch-mode="only"]').click();
         await p.locator('[data-action="exit-branch-focus"]').waitFor();
     };
     const viewState = () => p.evaluate(() => {

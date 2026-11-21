@@ -11,6 +11,7 @@ const doc=()=>({format:'pipeline-studio',schemaVersion:6,id:'v073',title:'Про
  const select=async id=>p.evaluate(id=>{const s=Studio.state;s.selected=new Set([id]);s.selectedEdges.clear();s.selectedEdge=s.selectedBus=null;Studio.render()},id);
  const openTable=async()=>{await select('table');await p.locator('[data-action=table-edit]').click()};
  try{await p.goto('file:///'+B.replaceAll('\\','/')+'/Pipeline-Studio.html');await p.waitForSelector('#home-new');await reset();await p.evaluate(()=>Studio.registry());
+  await p.getByRole('tab',{name:/Внутренние ссылки/}).click();
   check('Imported page source is displayed as a readable internal link',!(await p.locator('#registry-body').innerText()).includes('data:page/')&&(await p.locator('#registry-body').innerText()).includes('Другой лист'));
   await p.locator('[data-medit=legacy]').click();check('Internal editor hides path fields and resolves the selected page',await p.locator('#mat-url').isHidden()&&await p.locator('#mat-page').inputValue()==='p2');await p.locator('#mat-node').selectOption('remote');await p.locator('#mat-title').fill('Перейти к этапу');await p.locator('#mat-save').click();
   check('Changing an imported page link to a block preserves its material ID',await p.evaluate(()=>{const m=Studio.state.project.materials.find(m=>m.id==='legacy');return m.kind==='node'&&m.target.nodeId==='remote'&&m.target.pageId==='p2'}));

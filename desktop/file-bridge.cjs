@@ -42,6 +42,21 @@ class FileBridge {
   if(['pick','pick-document','pick-save'].includes(route)){const chosen=await this.picker(route,data);if(!chosen)return {cancelled:true};if(route==='pick-save'&&!/\.(html?|xml)$/i.test(chosen))throw Error('Сохраните документ как HTML или XML');const p=this.remember(chosen,route!=='pick'),info=await this.metadata(p,route==='pick-document');if(route==='pick-save'&&info.state==='ok')info.digest=await fileDigest(p);info.openURL=this.openURL(p);if(data.documentPath){const relative=path.relative(path.dirname(data.documentPath),p);info.path=path.isAbsolute(relative)?'':relative.replaceAll('\\','/');}return info;}
   const p=this.resolve(data);
   if(route==='stat'){const info=await this.metadata(p);if(data.pdf&&info.state==='ok'){const handle=await fsp.open(p,'r');try{await verifyPDF(handle,p)}finally{await handle.close()}info.pdf=true;info.pdfURL=this.pdfURL(p);}return info;}
+  if(route==='read-docx'){
+   if(path.extname(p).toLowerCase()!=='.docx')throw Error('Для текстового предпросмотра нужен DOCX');
+   const handle=await fsp.open(p,'r');
+   try{
+    const stat=await handle.stat(),size=stat.size;
+    if(!stat.isFile()||!size||size>24*1024*1024)throw Error('Для просмотра нужен файл DOCX размером до 24 МБ');
+    const bytes=new Uint8Array(size);let offset=0;
+    while(offset<size){
+     const {bytesRead}=await handle.read(bytes,offset,size-offset,offset);
+     if(!bytesRead)throw Error('DOCX изменился во время чтения');
+     offset+=bytesRead;
+    }
+    return bytes;
+   }finally{await handle.close();}
+  }
   if(route==='link')return {nativePath:p,openURL:this.openURL(p)};
   if(route==='read-document'){if(!/\.(html?|xml|json)$/i.test(p))throw Error('Нужен HTML, XML или JSON Studio');const stat=await fsp.stat(p);if(stat.size>40*1024*1024)throw Error('Документ слишком большой');return {text:await fsp.readFile(p,'utf8')};}
   if(route==='open'||route==='folder'){const info=await this.metadata(p);if(info.state!=='ok')throw Error(info.detail);await this.opener(p,route==='folder');return {opened:true,nativePath:p};}
